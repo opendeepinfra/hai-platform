@@ -15,20 +15,20 @@ RUN --mount=type=cache,sharing=private,target=/var/cache/apt \
 RUN ln -sf /usr/bin/python3.8 /usr/bin/python
 
 # binary files
-RUN curl -Lo /usr/local/bin/kubectl https://yinghuoai-public.oss-cn-hangzhou.aliyuncs.com/build_deps/kubectl-v1.20.15 && \
-  curl -Lo /usr/local/bin/decode-protobuf-camel https://yinghuoai-public.oss-cn-hangzhou.aliyuncs.com/build_deps/decode-protobuf-camel && \
+RUN curl -Lo /usr/local/bin/kubectl https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl && \
+  curl -Lo /usr/local/bin/decode-protobuf-camel https://github.com/opendeepinfra/hai-platform/releases/download/v1.0.0/decode-protobuf-camel && \
   chmod +x /usr/local/bin/kubectl /usr/local/bin/decode-protobuf-camel
 
 # install conda
-RUN curl -Lo /tmp/Miniconda3-4.12.0-Linux-x86_64.sh https://yinghuoai-public.oss-cn-hangzhou.aliyuncs.com/build_deps/Miniconda3-4.12.0-Linux-x86_64.sh && \
+RUN curl -Lo /tmp/Miniconda3-4.12.0-Linux-x86_64.sh https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/Miniconda3-py38_4.12.0-Linux-x86_64.sh && \
   /bin/bash /tmp/Miniconda3-4.12.0-Linux-x86_64.sh -b -p /usr/local/conda && \
   ln -sf /usr/local/conda/bin/conda /usr/local/bin/conda && \
   rm /tmp/Miniconda3-4.12.0-Linux-x86_64.sh
 
 # install fountain and ambient
-RUN mkdir -p /marsv2/scripts && \
-  curl https://yinghuoai-public.oss-cn-hangzhou.aliyuncs.com/build_deps/ambient.tar.gz | tar zxvf - -C /marsv2/scripts && \
-  curl https://yinghuoai-public.oss-cn-hangzhou.aliyuncs.com/build_deps/fountain.tar.gz | tar zxvf - -C /marsv2/scripts
+RUN mkdir -p /marsv2/scripts && cd /marsv2/scripts && \
+  wget https://github.com/opendeepinfra/hai-platform/releases/download/v1.0.0/ambient.tar.gz && tar zxvf ambient.tar.gz && \
+  wget https://github.com/opendeepinfra/hai-platform/releases/download/v1.0.0/fountain.tar.gz &&  tar zxvf fountain.tar.gz
 
 # system config
 RUN mkdir -p /run/sshd && \
@@ -52,8 +52,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # 安装 studio
 RUN pip install jupyterlab_hai_platform_ext && \
-  mkdir -p /marsv2/scripts/studio && \
-  curl https://github.com/HFAiLab/hai-platform-studio/releases/download/v0.19.0-alpha.1682329905.32209c5e/hai-studio-linux-x64-0.19.0-alpha.1682329905.32209c5e.tar.gz | tar zxvf - -C /marsv2/scripts/studio
+  mkdir -p /marsv2/scripts/studio && cd /marsv2/scripts/studio &&  \
+  wget https://github.com/opendeepinfra/hai-platform/releases/download/v1.0.0/hai-studio-linux-x64-0.19.0-alpha.1682505883.c59ad262.tar.gz && tar xzvf hai-studio-linux-x64-0.19.0-alpha.1682505883.c59ad262.tar.gz
 
 ############################################################
 

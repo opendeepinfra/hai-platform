@@ -2,3 +2,4 @@
 .idea/
 /docs/docs/source/generated
 *.pyc
+build/

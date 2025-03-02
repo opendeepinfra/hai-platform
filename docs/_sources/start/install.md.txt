@@ -16,7 +16,7 @@
 
 按照如下几步流程您可以构建部署起 HAI Platform：
 
-1. 获取平台镜像 `registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform:latest`；
+1. 获取平台镜像 `registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:latest`；
   
 2. 安装命令行工具 `hai-up`, `hai-cli`
 

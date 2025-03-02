@@ -28,9 +28,9 @@ HAI 分时调度训练平台, 可通过 `docker-compose` 或 `k8s` 部署，提�
     注：如需包含 haienv 202207 运行环境（包含cuda, torch），以同时作为训练任务镜像，需 `export BUILD_TRAIN_IMAGE=1`；如需自定义训练任务镜像，请参考 [附录：初始化数据库](#初始化数据库) 中 `train_environment` 的配置说明。
     ```shell
     # replace IMAGE_REPO with your own repo
-    $ IMAGE_REPO=registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform bash one/release.sh
+    $ IMAGE_REPO=registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform bash one/release.sh
       build hai success:
-        hai-platform image: registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform:fa07f13
+        hai-platform image: registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:fa07f13
         hai-cli whl:
           /home/hai-platform/build/hai-1.0.0+fa07f13-py3-none-any.whl
           /home/hai-platform/build/haienv-1.4.1+fa07f13-py3-none-any.whl
@@ -47,9 +47,9 @@ HAI 分时调度训练平台, 可通过 `docker-compose` 或 `k8s` 部署，提�
     也可以使用预构建的镜像和命令行：
     ```shell
     # 仅包含 hai-platform
-    registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform:latest
+    registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:latest
     # 包含 hai-platform 和 haienv 202207 运行环境（包含cuda, torch）
-    registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform:latest-202207
+    registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:latest-202207
 
     pip3 install hai --extra-index-url https://pypi.hfai.high-flyer.cn/simple --trusted-host pypi.hfai.high-flyer.cn -U
     ```

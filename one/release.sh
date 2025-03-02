@@ -2,7 +2,7 @@
 set -e
 
 RELEASE_VERSION=$(git rev-parse --short HEAD)
-IMAGE_REPO="${IMAGE_REPO:-registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform}"
+IMAGE_REPO="${IMAGE_REPO:-registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform}"
 BUILD_DIR="build"
 rm -rf ${BUILD_DIR} && mkdir -p ${BUILD_DIR}
 echo "STEP: prepare build directory"

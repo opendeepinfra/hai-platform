@@ -12,7 +12,7 @@ db = 'mars_db'
 user = 'root'
 password = 'root'
 host = '127.0.0.1'
-port = 15432
+port = 5432
 charset = 'utf8'
 pool_size = 20
 [database.postgres.secondary]
@@ -20,12 +20,12 @@ db = 'mars_db'
 user = 'root'
 password = 'root'
 host = '127.0.0.1'
-port = 15432
+port = 5432
 charset = 'utf8'
 pool_size = 20
 [database.redis]
 host = '127.0.0.1'
-port = 16379
+port = 6379
 db = 0
 password = 'root'
 
@@ -41,7 +41,7 @@ backend = 'redis'
 api_server = 'http://127.0.0.1'
 manager_nodes = ["jd-a1006-dl","jd-a1007-dl","jd-a1008-dl","jd-a1101-dl"]
 image_pull_policy = 'Always'
-manager_image = 'registry.high-flyer.cn/platform/hai_platform:d372d093'
+manager_image = 'registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:latest'
 [launcher.task_namespaces_by_role]
 internal = 'poly-hpp'
 external = 'poly-hpp'

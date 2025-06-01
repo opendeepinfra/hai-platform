@@ -32,6 +32,8 @@ from roman_parliament.utils import generate_key
 from experiment_manager.manager.manager_utils import get_log_uuid
 from utils import DatetimeEncoder
 
+from k8s import get_networkv1_api, get_k8s_version
+
 task_id = int(os.environ['TASK_ID'])
 module = os.path.basename(__file__)
 initialize_user_data_roaming(overwrite_enable_roaming=False)
@@ -53,6 +55,7 @@ manager_name = os.environ['MANAGER_NAME']
 manager_uid = k8s_appsv1_api.read_namespaced_stateful_set_with_retry(manager_name, os.environ['NAMESPACE']).metadata.uid
 owner_ref = client.V1OwnerReference(api_version='apps/v1', kind='StatefulSet', name=manager_name, uid=manager_uid, controller=False, block_owner_deletion=True)
 
+k8s_networkv1_api = get_networkv1_api()
 
 # worker会将pod状态都改为created再通知launcher启动，如果这个时候不是created，说明已经启动过init_manager了
 
@@ -168,16 +171,90 @@ def create_http_service_ingress(node, host, index):
                 watch.stop()
 
 
+# Feature: Ingress API Compatibility Based on Kubernetes Version (Fix Jupyter Container Exit Issue)
+# Fix: https://github.com/HFAiLab/hai-platform/issues/24
+
+def create_http_service_ingress_v1(node, host, index):
+    if 'ingress_rules' not in node.service or len(node.service.ingress_rules) == 0:
+        return
+    metadata = client.V1ObjectMeta(
+        labels=node.labels, namespace=node.namespace,
+        annotations={
+            "nginx.ingress.kubernetes.io/proxy-buffering": "off",
+            "nginx.ingress.kubernetes.io/proxy-read-timeout": "604800",
+            "nginx.ingress.kubernetes.io/proxy-send-timeout": "604800"
+        },
+        owner_references=[owner_ref],
+    )
+    rules, rewrite_rules = list(), list()
+    for rule in node.service.ingress_rules:
+        ingress_rule = client.NetworkingV1IngressRule(
+            host=host, http=client.NetworkingV1HTTPIngressRuleValue(
+                paths=[client.NetworkingV1HTTPIngressPath(
+                    backend=client.NetworkingV1IngressBackend(
+                        service_name=node.pod_id,
+                        service_port=rule.port,
+                    ),
+                    path=f'{rule.path}(/|$)(.*)' if rule.rewrite_uri else rule.path,
+                    path_type='Prefix'
+                )]
+            )
+        )
+        if rule.rewrite_uri:
+            rewrite_rules.append(ingress_rule)
+        else:
+            rules.append(ingress_rule)
+
+    for is_rewrite, rules in enumerate([rules, rewrite_rules]):
+        if not rules:
+            continue
+        ingress_name = f'{node.pod_id}-{index}'
+        if is_rewrite:
+            # rewrite uri for custom service
+            metadata.annotations['nginx.ingress.kubernetes.io/rewrite-target'] = '/$2'
+            ingress_name += '-rewrite'
+        metadata.name = ingress_name
+        ingress = client.NetworkingV1Ingress(
+            kind='Ingress',
+            metadata=metadata,
+            spec=client.NetworkingV1IngressSpec(ingress_class_name='nginx', rules=rules)
+        )
+        try:
+            k8s_networkv1_api.create_namespaced_ingress_with_retry(namespace=node.namespace, body=ingress)
+        except ApiException as ae:
+            if ae.status == 409:  # conflict
+                logger.info(f'ingress {ingress_name} already exits')
+            else:
+                logger.exception(ae)
+                logger.f_error(f'创建 ingress 失败: {ae}')
+                raise
+
+        # wait for ingress provision
+        watch = Watch()
+        for event in watch.stream(func=k8s_networkv1_api.list_namespaced_ingress,
+                                  namespace=node.namespace,
+                                  field_selector=f'metadata.name={ingress_name}'):
+            if event["object"].status.load_balancer.ingress is not None:
+                logger.info(f'为 {node.pod_id} 创建 ingress {ingress_name} 成功，信息：'
+                            f'{event["object"].status.load_balancer.ingress}')
+                watch.stop()
+
+# Feature: Ingress API Compatibility Based on Kubernetes Version (Fix Jupyter Container Exit Issue)
+# Fix: https://github.com/HFAiLab/hai-platform/issues/24
 @log_stage(log_id)
 def create_master_network(rank, node, user_role):
     create_tcp_service_nodeport(rank, node)
+    k8s_ver = get_k8s_version()
     if rank == 0:  # 只有 master 才会创建
         create_headless_services(node)
         ingress_hosts = [CONF.jupyter.ingress_host[user_role]] if isinstance(
             CONF.jupyter.ingress_host[user_role],
             str) else CONF.jupyter.ingress_host[user_role]
         for index, host in enumerate(ingress_hosts):
-            create_http_service_ingress(node, host, index)
+            if k8s_ver < (1, 21):
+                create_http_service_ingress(node, host, index)
+            else:
+                create_http_service_ingress_v1(node, host, index)
 
 
 @log_stage(log_id)

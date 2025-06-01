@@ -20,8 +20,6 @@ from kubernetes.leaderelection import leaderelection, electionconfig
 from logm import logger
 from conf import CONF
 
-from kubernetes.client import VersionApi
-
 
 KUBECLIENTS = dict()
 CURRENT_CLUSTER_HOST = os.environ[config.incluster_config.SERVICE_HOST_ENV_NAME]
@@ -977,46 +975,3 @@ def get_k8s_dict_val(data, key):
                 ['_' + c.lower() if c.isupper() else c for c in key]).lstrip('_')
         val = data.get(other_key, None)
     return val
-
-# Feature: Ingress API Compatibility Based on Kubernetes Version (Fix Jupyter Container Exit Issue)
-# Fix: https://github.com/HFAiLab/hai-platform/issues/24
-
-def parse_version(ver_str):
-    """Parses version string like '1.20.4' into a tuple of integers (1, 20, 4)"""
-    parts = ver_str.strip().lstrip('v').split('-')[0]  # remove 'v' prefix and any suffix like '-gke.1'
-    return tuple(map(int, parts.split('.')))
-
-def get_k8s_version():
-    version_api = VersionApi(api_client=client)
-    vinfo = version_api.get_code()
-    return parse_version(vinfo.git_version)
-
-
-def get_networkv1_api(cluster_host = CURRENT_CLUSTER_HOST):
-    load_all_api_client_cached()
-    if cluster_host == 'all':
-        return {host: NetworkingV1ApiWithRetry(api_client=client) for host, client in KUBECLIENTS.items()}
-    return NetworkingV1ApiWithRetry(api_client=KUBECLIENTS[cluster_host])
-
-
-class NetworkingV1ApiWithRetry(client.NetworkingV1Api):
-    def __init__(self, api_client=None):
-        super().__init__(api_client)
-
-    @retry
-    def read_namespaced_ingress_with_retry(self, name, namespace, **kwargs):
-        try:
-            return self.read_namespaced_ingress(name, namespace, **kwargs)
-        except ApiException as ae:
-            if ae.status == 404:
-                return None
-            raise ae
-
-    @retry
-    def create_namespaced_ingress_with_retry(self, namespace, body, **kwargs):
-        try:
-            return self.create_namespaced_ingress(namespace, body, **kwargs)
-        except ApiException as ae:
-            if ae.status == 409:
-                return None
-            raise ae

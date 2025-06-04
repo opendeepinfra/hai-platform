@@ -11,20 +11,19 @@ class TickData(object):
             valid=False,
             resource_df: pd.DataFrame = pd.DataFrame(columns=[
                 'cpu', 'nodes', 'name', 'gpu_num', 'status', 'mars_group', 'memory', 'group', 'working', 'leaf',
-                'spine', 'active', 'schedule_zone', 'working_user_role', 'origin_group', 'allocated', 'flag'
+                'spine', 'active', 'schedule_zone', 'working_user_role', 'origin_group', 'allocated'
             ]),
             user_df: pd.DataFrame = pd.DataFrame(columns=[
                 'user_name', 'resource', 'group', 'quota', 'role', 'priority', 'active'
             ]),
             task_df: pd.DataFrame = pd.DataFrame(columns=[
-                'id', 'nb_name', 'user_name', 'code_file', 'group', 'nodes', 'assigned_nodes', 'backend', 'task_type',
+                'id', 'nb_name', 'user_name', 'code_file', 'group', 'nodes', 'assigned_nodes', 'task_type',
                 'queue_status', 'priority', 'first_id', 'running_seconds', 'chain_id', 'config_json', 'user_role',
                 'assign_result', 'match_result', 'scheduler_msg', 'created_seconds', 'custom_rank',
                 'worker_status', 'memory', 'cpu', 'assigned_gpus', 'schedule_zone', 'client_group', 'current_schedule_zone',
                 'is_spot_jupyter', 'match_rank', 'runtime_config_json'
             ]),
-            extra_data: dict = None,
-            metrics: dict = None
+            extra_data: dict = None
     ):
         # 当前 seq
         self.seq = seq
@@ -36,7 +35,6 @@ class TickData(object):
         self.task_df = task_df
         # 一些组件的 tick_data 不依赖 df，是自己记录的东西，写在这里
         self.extra_data = extra_data if extra_data is not None else {}
-        self.metrics = metrics if metrics is not None else {}
 
     @classmethod
     def dumps(cls, instance: "TickData") -> bytes:

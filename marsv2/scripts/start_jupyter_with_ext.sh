@@ -37,13 +37,10 @@ fi
 
 # jupyterlab
 mkdir -p ${NOTEBOOK_DIR}
-PLUGIN_NAMES=( HF_AiLab_ext jupyterlab_hai_platform_ext )
-for name in "${PLUGIN_NAMES[@]}"; do
-  if [ ! -x "${JUPYTERLAB_SETTINGS_DIR}/${name}/config.jupyterlab-settings" ]; then
-    mkdir -p ${JUPYTERLAB_SETTINGS_DIR}/${name}
-    echo {\"token\": \"${USER_TOKEN}\"} > ${JUPYTERLAB_SETTINGS_DIR}/${name}/config.jupyterlab-settings
-  fi
-done
+if [ ! -x "${JUPYTERLAB_SETTINGS_DIR}/HF_AiLab_ext/config.jupyterlab-settings" ]; then
+  mkdir -p ${JUPYTERLAB_SETTINGS_DIR}/HF_AiLab_ext
+  echo {\"token\": \"${USER_TOKEN}\"} > ${JUPYTERLAB_SETTINGS_DIR}/HF_AiLab_ext/config.jupyterlab-settings
+fi
 mkdir -p ${JUPYTERLAB_WORKSPACES_DIR}
 
 # 插件 server 端挂载路径
@@ -61,7 +58,7 @@ echo "[jupyter start]current traitlets_version:$traitlets_version"
 function version_gt() { test "$(echo "$@" | tr " " "\n" | sort -V | head -n 1)" != "$1"; }
 
 # 内部用户开启 Jupyter 删除文件放入回收站(.Trash 文件夹)，外部用户不开：
-DELETE_TO_TRASH=`[ $MARSV2_USER_ROLE == 'external' ] && echo 'False' || echo 'True'`
+DELETE_TO_TRASH=`[ $MARSV2_USER_ROLE == 'internal' ] && echo 'True' || echo 'False'`
 
 # HINT: traitlet 的 4 和 5 版本不兼容，需要区分写法，这里由于 Shell 语法无法完全通过变量兼容两种写法的问题，我们分开维护
 if version_gt $traitlets_version 5.0.0; then

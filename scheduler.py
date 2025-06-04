@@ -22,7 +22,7 @@ scheduler_modules = {}
 
 
 if __name__ == '__main__':
-    global_config_conn = ProcessConnection('global_config_conn', init_obj={k: v for k, v in MarsDB().execute('''
+    global_config_conn = ProcessConnection(init_obj={k: v for k, v in MarsDB().execute('''
         select "key", "value"
         from "multi_server_config"
         where "module" = 'scheduler'
@@ -34,7 +34,8 @@ if __name__ == '__main__':
         for name, config in CONF.scheduler.get(suffix, {}).items():
             name = f'{name}_{suffix}'
             scheduler_modules[name] = {
-                'conn': ProcessConnection(name),
+                'conn': ProcessConnection(),
+                'metric_conn': ProcessConnection(init_obj={}, dumps=pickle.dumps, loads=pickle.loads),
                 'class': import_from_str(config['class']),
                 'kwargs': config.get('kwargs', {})
             }
@@ -42,6 +43,7 @@ if __name__ == '__main__':
                 name=name,
                 conn=scheduler_modules[name]['conn'],
                 global_config_conn=global_config_conn,
+                metric_conn=scheduler_modules[name]['metric_conn'],
                 **scheduler_modules[name]['kwargs']
             )
     # 指定 relation
@@ -72,8 +74,9 @@ if __name__ == '__main__':
     monitor_config = CONF.scheduler.monitor[monitor_name]
     monitor = import_from_str(monitor_config['class'])(
         name=monitor_name,
-        conn=ProcessConnection(monitor_name),
+        conn=ProcessConnection(),
         global_config_conn=global_config_conn,
+        metric_conn=ProcessConnection(init_obj={}, dumps=pickle.dumps, loads=pickle.loads),
         scheduler_modules=scheduler_modules,
         **monitor_config.get('kwargs', {})
     )

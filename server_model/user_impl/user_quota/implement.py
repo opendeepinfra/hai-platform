@@ -23,7 +23,7 @@ class UserQuota(UserQuotaExtras, IUserQuota):
     async def async_get(self):
         await self.prefetch_quota_df()
         basic_quota = self.basic_quota()
-        if not self.user.is_external:
+        if self.user.is_internal:
             basic_quota.update({
                 'node_quota': self.node_quota,
                 'node_quota_limit': self.node_quota_limit,
@@ -38,7 +38,7 @@ class UserQuota(UserQuotaExtras, IUserQuota):
         if priority_label not in TASK_PRIORITY.keys():      raise ExceptionWithoutErrorLog('priority label 不正确')
 
         resource = f'node-{group_label}-{priority_label}'
-        if self.user.is_external:
+        if not self.user.is_internal:
             # 外部用户需要记录操作日志
             await self.prefetch_quota_df()
             original_quota = self.quota(resource)
@@ -153,19 +153,11 @@ class UserQuota(UserQuotaExtras, IUserQuota):
         """
         return self.prefix_quotas('train_environment:')
 
-    def custom_service(self, service_type) -> List[str]:
-        """
-        用户允许的自定义服务, service_type 目前仅支持 tcp / http
-        resource 格式如: custom_service:http:service_port
-        service_port 为 '*' 表示允许所有 port
-        @return: list
-        """
-        return self.prefix_quotas(f'custom_service:{service_type}:')
-
     @classmethod
     def df_to_jupyter_quota(cls, df: pd.DataFrame):
         res = {}
         for k, v in df.quota.to_dict().items():
+            # FIXME: 这里需要显式区分下quota类别
             res[k.replace('jupyter:', '')] = {
                 'cpu': int(str(v)[-5:-2]),
                 'memory': int(str(v)[-9:-5]),
@@ -182,7 +174,7 @@ class UserQuota(UserQuotaExtras, IUserQuota):
         res_priority_dict = {
             TASK_PRIORITY.AUTO.name: TASK_PRIORITY.AUTO.value
         }
-        if self.user.is_external:
+        if not self.user.is_internal:
             # 外部用户只允许使用 auto
             return res_priority_dict
         priority_mapping = {k: v for k, v in TASK_PRIORITY.items()}

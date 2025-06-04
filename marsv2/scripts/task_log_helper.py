@@ -4,7 +4,6 @@
     且引入包依赖时需要同步修改 /marsv2/scritps/validate_image.sh
 """
 
-import glob
 import functools
 import json
 import os
@@ -28,8 +27,6 @@ try:
     WATCHDOG_TIME_SHM_ID_SHM = sysv_ipc.SharedMemory(WATCHDOG_TIME_SHM_ID, sysv_ipc.IPC_CREX, mode=0o777)
 except sysv_ipc.ExistentialError:
     WATCHDOG_TIME_SHM_ID_SHM = sysv_ipc.SharedMemory(WATCHDOG_TIME_SHM_ID)
-
-MAX_LOG_SIZE_PER_SERVICE = 10 * 1024 ** 2
 
 
 context = zmq.Context()
@@ -61,7 +58,7 @@ def update_time():
 
 
 def check_timeout_jupyter():
-    if os.environ['MARSV2_USER_ROLE'] != 'external':
+    if os.environ['MARSV2_USER_ROLE'] == 'internal':
         # 内部用户的 service task 不超时
         return
     is_shared_group = os.environ.get('MARSV2_SHARED_JUPYTER', '1') == '1'
@@ -127,7 +124,6 @@ class ServiceManager:
         self.pid = None
         self.pgid = None
         self.exit_code = 0
-        self.restart_cnt = 0
         self.watch_thread = threading.Thread(target=self.launch_and_watch)
         self.watch_thread.start()
 
@@ -171,35 +167,12 @@ class ServiceManager:
         except Exception as e:
             self.print(f'kill 进程组 {self.pgid} 失败: {e}')
 
-    @property
-    def log_file_path(self):
-        return f'{os.environ.get("MARSV2_LOG_FILE_PATH")}.{self.service_name}.service_log'
-
-    def rotate_service_log(self):
-        logs = glob.glob(self.log_file_path + '*')
-        sum_log_size = sum(os.path.getsize(f) for f in logs)
-        if sum_log_size <= MAX_LOG_SIZE_PER_SERVICE:
-            return
-        self.print(f'日志文件大小超限 ({sum_log_size / 1024 ** 2:.1f}M > {MAX_LOG_SIZE_PER_SERVICE // 1024 ** 2}M), 清理旧的服务日志')
-        for file in sorted(logs, key=lambda f: os.path.getmtime(f)):
-            sum_log_size -= os.path.getsize(file)
-            os.remove(file)
-            if sum_log_size <= MAX_LOG_SIZE_PER_SERVICE:
-                return
-
     def launch_and_watch(self):
         try:
-            self.rotate_service_log()
-            self.restart_cnt += 1
-            flag_line = f'[start service [{self.service_name}] of task ' \
-                        f'[{os.environ.get("MARSV2_NB_NAME")}({os.environ.get("MARSV2_TASK_ID")})] ' \
-                        f'on {os.environ.get("MARSV2_NODE_NAME")} for {os.environ.get("MARSV2_USER")}]'
             log_pipe_chain = f"ts '[%Y-%m-%d %H:%M:%.S]' | pv -L ${{MAX_OPS}} 2>/dev/null" \
                              f" | rotatelogs -n ${{NUMBER_OF_FILES}}" \
-                             f" {self.log_file_path}.{self.restart_cnt} ${{MAX_FILESIZE}}"
-            cmd = f"set -o pipefail; " \
-                  f"(echo {shlex.quote(flag_line)} && ({self.config.get('startup_script')})) " \
-                  f"2>&1 | {log_pipe_chain}"
+                             f" ${{MARSV2_LOG_FILE_PATH}}.{self.service_name}.service_log ${{MAX_FILESIZE}}"
+            cmd = f"set -o pipefail; ({self.config.get('startup_script')}) 2>&1 | {log_pipe_chain}"
             cmd = f"MARSV2_SERVICE_NAME={self.service_name} MARSV2_SERVICE_PORT={self.config.get('port')} " \
                   "/sbin/runuser --fast ${MARSV2_USER} --preserve-environment -c " + shlex.quote(cmd)
             proc = subprocess.Popen(cmd, shell=True, executable='/bin/bash')
@@ -255,7 +228,7 @@ class ServiceManager:
 
 def manage_services():
     recv_socket = zmq.Context().socket(zmq.PULL)
-    recv_socket.connect(f'tcp://{os.environ["MARSV2_USER"].replace("_", "-")}-{os.environ["MARSV2_TASK_ID"]}-manager-0:5776')
+    recv_socket.connect(f'tcp://{os.environ["MARSV2_USER"]}-{os.environ["MARSV2_TASK_ID"]}-manager-0:5776')
     thread_pool = ThreadPoolExecutor(max_workers=8)
 
     services = json.loads(os.environ.get('SERVICES', '{}'))

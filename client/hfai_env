@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+
+if [[ "$#" -ne 1 ]] && [[ "$#" -ne 3 ]]; then
+    echo "usage: source hfai_env <venv_name> [-u <user>]"
+    return -1
+fi
+
+if [[ "$#" -eq 3 ]] && [[ "$2" -ne "-u" ]]; then
+    echo "usage: source hfai_env <venv_name> [-u <user>]"
+    return -1
+fi
+
+MARSV2_VENV_PATH=$(python3 -c "import os, munch; print(munch.Munch.fromYAML(open(os.path.expanduser(os.environ.get('HFAI_CLIENT_CONFIG', '~/.hfai/conf.yml')))).venv_path)" 2>/dev/null) || MARSV2_VENV_PATH=None
+if [[ ${MARSV2_VENV_PATH} == None ]]; then
+    MARSV2_VENV_PATH=/hf_shared/hfai_envs/$(python3 -c "import getpass; print(getpass.getuser())")
+fi
+
+HFAI_VENV=$1
+MARSV2_VENV_ROOT=`dirname ${MARSV2_VENV_PATH}`
+BIND_USER=$3
+
+NEWLINE=$'\n'
+mkdir -p ~/.hfai
+FIND_ENV_SCRIPT=~/.hfai/find_hfai_env.py
+cat << EOF > ${FIND_ENV_SCRIPT}
+import os, sys, sqlite3
+
+marsv2_root = "${MARSV2_VENV_ROOT}"
+hf_env = "${HFAI_VENV}"
+bind_user = "${BIND_USER}"
+
+results = []
+for user in sorted(os.listdir(marsv2_root)):
+  if bind_user != '' and user != bind_user:
+    continue
+  venv_db_dir = os.path.join(marsv2_root, user, 'venv.db')
+  if not os.path.exists(venv_db_dir):
+    continue
+  try:
+    db = sqlite3.connect(venv_db_dir)
+    result = db.execute(f"select path from venv where venv_name='{hf_env}'").fetchone()
+    if result and len(result) > 0:
+      results.append((user, result[0]))
+    else:
+      pass
+  except Exception as e:
+    pass
+
+if len(results) == 0:
+  print(f'找不到环境: {hf_env}, 请使用 hfai venv list 查看能够导入的环境', file=sys.stderr)
+#  print('#not_found')
+elif len(results) > 1:
+  print(f'发现用户 {[u[0] for u in results]} 均拥有hfai env {hf_env}, 请使用 source hfai_env {hf_env} -u <user> 指定确切的用户', file=sys.stderr)
+#  print('#duplicate')
+else:
+  print(f'found [{hf_env}] from [{results[0][0]}] in [{results[0][1]}], start loading...', file=sys.stderr)
+  print(results[0][1])
+EOF
+
+HFAI_ENV_CERTAIN_PATH=`python3 ${FIND_ENV_SCRIPT}`
+# clean
+unset MARSV2_VENV_PATH
+rm -rf ${FIND_ENV_SCRIPT}
+
+if [ ! -n "${HFAI_ENV_CERTAIN_PATH}" ]; then
+#    echo "$1 not exist"
+    return -1
+fi
+
+source ${HFAI_ENV_CERTAIN_PATH}/activate
+export PATH=${HFAI_ENV_CERTAIN_PATH}/cap_bin:${HFAI_ENV_CERTAIN_PATH}/bin:${PATH}

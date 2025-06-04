@@ -1,0 +1,19 @@
+[Unit]
+Description=stop func
+Wants=manager_init.service
+After=manager_init.service
+
+[Service]
+User=root
+PermissionsStartOnly=true
+WorkingDirectory=/high-flyer/code/multi_gpu_runner_server
+EnvironmentFile=/etc/environment
+ExecStart=bash -c 'MASS_PORT=8004 PYTHONPATH=/high-flyer/code/multi_gpu_runner_server python -u experiment_manager/manager/stop_func.py'
+Restart=always
+RestartSec=10s
+TimeoutStartSec=20s
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

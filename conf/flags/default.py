@@ -1,6 +1,0 @@
-
-class USER_ROLE:
-    INTERNAL = 'internal'
-    EXTERNAL = 'external'
-
-ALL_USER_ROLES = [USER_ROLE.INTERNAL, USER_ROLE.EXTERNAL]

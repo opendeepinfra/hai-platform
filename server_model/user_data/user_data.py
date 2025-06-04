@@ -1,4 +1,3 @@
-
 import multiprocessing
 import os
 import pickle
@@ -10,6 +9,7 @@ from threading import Thread
 from typing import Dict, Optional, Type, Union
 
 import ujson
+from prometheus_client import Gauge, Counter
 
 from conf import CONF
 from db import redis_conn
@@ -111,13 +111,11 @@ class UserData(UserDataBase):
         self._last_sync_signal_ts = defaultdict(lambda: 0)
         self._throttling_cnt = defaultdict(lambda : 0)
         self._max_throttling_time = CONF.user_data_roaming.get('max_num_throttling', 5)
-        self._pending_reload = None
         while len(self._tables) != len(TABLES):
             log_warning('未成功订阅所有表, 阻塞等待并重试订阅.')     # 可能 DB 还没起来, sync point 必须订阅全部的表才能启动
             self.subscribe_tables(list(TABLES.keys()))
             time.sleep(1)
         self.user_last_activity_in_ns = {user: time.time_ns() for user in UserTable.df.user_name.tolist()}
-        self.shared_group_last_activity_in_ns = {group: time.time_ns() for group in set(UserTable.df.shared_group.tolist())}
         Thread(target=self._sync_timer, daemon=True).start()
         Thread(target=self._redis_dumper, daemon=True).start()
         Thread(target=self._last_activity_modifier, daemon=True).start()
@@ -128,28 +126,30 @@ class UserData(UserDataBase):
             time.sleep(CONF.user_data_roaming.get('sync_interval', 1.0))
             try:
                 self.sync_from_db()
-                if self._pending_reload is not None:
-                    self.signal_reload(self._pending_reload)
-                    self._pending_reload = None
             except Exception as e:  # 兜底, 这个线程不能挂, 否则议会可能丢数据
-                log_error('Sync from db 出错', e, fetion_interval=60)
-                time.sleep(1)
+                log_error('Sync from db 出错: 发送 sync singal 出错', e)
 
     def _last_activity_modifier(self):
+        WINDOW_SIZE = 200
+        latency_data, latency_sum, first_elem_idx = [], 0., 0
+        gauge = Gauge("user_last_activity_update_latency", "Latency of user last activity updating.")
+        counter = Counter("user_last_activity_update_counter", "Counter of user last activity updating.")
+
         while True:
-            try:
-                data = redis_conn.brpop('user_data_last_activity_update')
-                data = pickle.loads(data[1])
-                self.user_last_activity_in_ns[data['user_name']] = time.time_ns()
-                if data.get('from_shared_task', False):
-                    user_df = UserTable.df
-                    if len(sub_user_df := user_df[user_df.user_name == data['user_name']]) > 0:
-                        self.shared_group_last_activity_in_ns[sub_user_df.iloc[0].shared_group] = time.time_ns()
-            except Exception as e:
-                log_error(f'处理 last activity 更新请求失败  {e}', e, fetion_interval=60)
-                # 可能是 redis down, 会丢消息, 主动刷新全部用户的时间戳
-                self.user_last_activity_in_ns = {k: time.time_ns() for k in self.user_last_activity_in_ns}
-                time.sleep(1)
+            data = redis_conn.brpop('user_data_last_activity_update')
+            data = pickle.loads(data[1])
+            self.user_last_activity_in_ns[data['user_name']] = time.time_ns()
+
+            latency = time.time() - data['ts']
+            if len(latency_data) < WINDOW_SIZE:
+                latency_data.append(latency)
+                latency_sum += latency
+            else:
+                latency_sum += latency - latency_data[first_elem_idx]
+                latency_data[first_elem_idx] = latency
+                first_elem_idx = (first_elem_idx + 1) % WINDOW_SIZE
+            gauge.set(latency_sum / len(latency_data))
+            counter.inc()
 
     def _redis_dumper(self):
         """ 仅在 sync point 进程中开线程执行 """
@@ -163,22 +163,12 @@ class UserData(UserDataBase):
                 ]
                 result.sort(key=lambda x: x['ts'], reverse=True)
                 redis_conn.set('user_last_activity_in_ns', ujson.dumps(result))
-                result = [{**r, 'ts': str(r['ts'])} for r in result]
-                redis_conn.set('user_last_activity_in_ns_str', ujson.dumps(result))
-                shared_group_result = [
-                    {'ts': int(time_ns), 'shared_group': shared_group}
-                    for shared_group, time_ns in self.shared_group_last_activity_in_ns.items()
-                ]
-                shared_group_result.sort(key=lambda x: x['ts'], reverse=True)
-                redis_conn.set('shared_group_last_activity_in_ns', ujson.dumps(shared_group_result))
-                shared_group_result = [{**r, 'ts': str(r['ts'])} for r in shared_group_result]
-                redis_conn.set('shared_group_last_activity_in_ns_str', ujson.dumps(shared_group_result))
-                # 主动更新一下 computed tables, 以便内容有更新时触发其注册的 update_hook, 目前用于 `UserWithAllGroupsTable` 的 update 时间戳更新
-                for table in self._tables.values():
-                    if table.is_computed:
-                        self._get_df(table.table_name)
             except Exception as e:
-                log_error(f'dump user last activity failed: {e}', exception=e, fetion_interval=60)
+                log_error(f'dump user last activity failed: {e}', exception=e)
+            # 主动更新一下 computed tables, 以便内容有更新时触发其注册的 update_hook, 目前用于 `UserWithAllGroupsTable` 的 update 时间戳更新
+            for table in self._tables.values():
+                if table.is_computed:
+                    self._get_df(table.table_name)
 
     def _get_df(self, table_name):
         self._tables[table_name].before_get_df_hook()
@@ -248,11 +238,7 @@ class UserData(UserDataBase):
                     TABLES[patch["table_name"]].patch(patch)
             # 通过议会广播变动
             if broadcast:
-                try:
-                    MessageQueue.send(MessageType.PATCH, patches)
-                except Exception as e:
-                    log_error('发送 patch 消息失败', e)
-                    self._pending_reload = '有 patch 消息发送失败'
+                MessageQueue.send(MessageType.PATCH, patches)
 
     def reload_dfs(self, table_names=None):
         table_names = self._subscribed_tables if table_names is None else table_names

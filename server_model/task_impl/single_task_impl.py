@@ -15,7 +15,6 @@ from logm import logger
 from .code import parse_code_cmd
 from .runtime_mounts import add_runtime_mounts
 from .runtime_envs import add_runtime_envs
-from .runtime_sidecars import add_runtime_sidecars
 from roman_parliament.attr_hooks import generate_parliament_attr_value
 from server_model.pod import Pod
 from server_model.selector import UserSelector
@@ -50,7 +49,7 @@ class SingleTaskImpl(ITaskImpl, ABC):
         return {
             'MARSV2_TASK_TYPE': self.task.task_type,
             'MARSV2_TASK_ID': str(self.task.id),
-            'FULL_HFAI_COMMANDS': '1' if not self.task.user.is_external else '0',
+            'FULL_HFAI_COMMANDS': '1' if self.task.user.is_internal else '0',
             'MARSV2_TASK_ENTRYPOINT_EXECUTABLE': '1' if self.task.schema.get('spec', {}).get('entrypoint_executable', False) else '0',
             'MARSV2_TASK_BACKEND': self.task.backend,
             'MARSV2_NB_NAME': self.task.nb_name,
@@ -60,11 +59,6 @@ class SingleTaskImpl(ITaskImpl, ABC):
             'MARSV2_VENV_PATH': f'/hf_shared/hfai_envs/{self.task.user_name}',  # 环境变量暂时保留
             'HAIENV_PATH': f'/hf_shared/hfai_envs/{self.task.user_name}',
             'MARSV2_BFF_URL': CONF.try_get(f'server_url.bff.{self.task.user.role}'),
-            # git 相关 env
-            'MARSV2_GIT_REMOTE_REPO': self.task.config_json.get('git_remote_repo', ''),
-            'MARSV2_GIT_TARGET_REVISION': self.task.config_json.get('git_commit_sha', '') or self.task.schema.get('spec', {}).get('git_target_revision', ''),
-            'MARSV2_GIT_COMMIT_SHA': self.task.config_json.get('git_commit_sha', ''),
-            'MARSV2_GIT_REPO_AS_WORKSPACE': int(self.task.schema.get('spec', {}).get('git_remote_repo', '') != ''),
         }
 
     @cached_property
@@ -207,8 +201,7 @@ class SingleTaskImpl(ITaskImpl, ABC):
                     all_service['headless_services'].append({'name': service['name'], 'port': service['port']})
                     all_service['ingress_rules'].append({
                         'path': f'/{self.task.user_name}/{self.task.nb_name}' + f'{transform_service_name(service["name"])}',
-                        'port': service['port'],
-                        'rewrite_uri': service.get('rewrite_uri', False),
+                        'port': service['port']
                     })
             # 需要创建至少一个 headless service 实现 DNS 解析
             if len(all_service['headless_services']) == 0:
@@ -216,7 +209,7 @@ class SingleTaskImpl(ITaskImpl, ABC):
         return all_service
 
     def get_pod_namespace(self):
-        return self.user.config.task_namespace
+        return CONF.launcher.task_namespace
 
     def get_pod_labels(self, rank):
         return {
@@ -234,28 +227,24 @@ class SingleTaskImpl(ITaskImpl, ABC):
         return self.user.quota.user_linux_capabilities
 
     def enable_privileged_pod(self):
-        if not self.task.user.is_external and self.task.user.quota.quota('privileged'):
+        if self.task.user.is_internal and self.task.user.quota.quota('privileged'):
             return True
         return False
 
     def enable_pod_host_ipc(self):
-        if not self.task.user.is_external and self.task.user.quota.quota('host_ipc'):
+        if self.task.user.is_internal and self.task.user.quota.quota('host_ipc'):
             return True
         return False
 
     def enable_pod_host_pid(self):
-        if not self.task.user.is_external and self.task.user.quota.quota('host_pid'):
+        if self.task.user.is_internal and self.task.user.quota.quota('host_pid'):
             return True
         return False
 
     def enable_pod_host_network(self):
-        if not self.task.user.is_external and self.task.user.quota.quota('host_network'):
+        if self.task.user.is_internal and self.task.user.quota.quota('host_network'):
             return True
         return False
-
-    def enable_share_process_namespace(self):
-        return False
-
 
     def build_schemas(self, *args, **kwargs):
         """
@@ -290,12 +279,6 @@ class SingleTaskImpl(ITaskImpl, ABC):
             'MARSV2_TASK_WORKSPACE': code_dir,
             'MARSV2_TASK_ENTRYPOINT': os.path.join(code_dir, code_file),
         })
-        # 添加数据库中配置的额外环境变量
-        extra_envs = MarsDB().execute("""
-            select value from multi_server_config where key = 'extra_training_env' and module = 'launcher'
-        """).fetchone()
-        if extra_envs is not None:
-            self._runtime_envs.update(extra_envs.value)
         for rank, pod in enumerate(self.task.pods):
             if self.task.nb_name == 't_unschedulable_ZpRm4tEQpY3XXHkA':
                 cpu_requests = 100000
@@ -307,7 +290,7 @@ class SingleTaskImpl(ITaskImpl, ABC):
                 cpu_requests = 0
             else:
                 cpu_requests = pod.cpu
-            schema = {
+            schemas.append({
                 'pod_id': pod.pod_id,
                 'service': self.get_service(rank),
                 'namespace': self.get_pod_namespace(),
@@ -317,7 +300,6 @@ class SingleTaskImpl(ITaskImpl, ABC):
                 'host_ipc': self.enable_pod_host_ipc(),
                 'host_pid': self.enable_pod_host_pid(),
                 'host_network': self.enable_pod_host_network(),
-                'share_process_namespace': self.enable_share_process_namespace(),
                 'image': train_environment.image,
                 'link_hfai_image': train_environment.user_defined,
                 'mounts': mounts,
@@ -325,7 +307,6 @@ class SingleTaskImpl(ITaskImpl, ABC):
                 'grant_user_group_script': self.grant_user_group_script(),
                 'hf_envs_values': self.hf_envs_values(rank=rank),
                 'haiprof_env_values': self.haiprof_env_values(),
-                'sidecars': [],
                 'node': pod.node,
                 'node_selector': {
                     'kubernetes.io/hostname': pod.node
@@ -340,11 +321,7 @@ class SingleTaskImpl(ITaskImpl, ABC):
                         'limits': pod.memory,
                     }
                 }
-            }
-            # 在原来的 schema 中，注入sidecar，同样的因为 schema 的传入，我们也有修改 schema 的能力
-            add_runtime_sidecars(task_impl=self, rank=rank, schema=schema)
-
-            schemas.append(schema)
+            })
         return schemas
 
     def update_pod_status(self, rank, status, *args, **kwargs):

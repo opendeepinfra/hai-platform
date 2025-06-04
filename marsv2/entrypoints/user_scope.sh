@@ -1,6 +1,6 @@
 #!/bin/bash
 echo 'this is user scope shell' >> ${MARSV2_DEBUG_LOG_FILE_PATH}
-echo [start training ${MARSV2_NB_NAME}\(${MARSV2_TASK_ID}\) on ${MARSV2_NODE_NAME} for ${MARSV2_USER}] | ts '[%Y-%m-%d %H:%M:%.S]' >> ${MARSV2_LOG_FILE_PATH}
+echo [start training ${MARSV2_NB_NAME}\(${MARSV2_TASK_ID}\) on ${MARSV2_NODE_NAME} for ${MARSV2_USER}] | ts '[%Y-%m-%d %H:%M:%.S]' > ${MARSV2_LOG_FILE_PATH}
 
 set +e
 
@@ -25,7 +25,7 @@ chmod 700 ${HOME}/.hfai
 
 echo "snapshot user scripts" >> ${MARSV2_DEBUG_LOG_FILE_PATH}
 if [[ ${RANK} == "0" ]]; then
-  mkdir -m u=rwx,go="" -p /marsv2/log/${MARSV2_TASK_ID}/user_scripts
+  mkdir -p /marsv2/log/${MARSV2_TASK_ID}/user_scripts
   cp -r /marsv2/scripts/init /marsv2/log/${MARSV2_TASK_ID}/user_scripts &
   # jupyter task 没有 code_file，不需要拷贝
   if [ "${MARSV2_TASK_TYPE}" != "jupyter" ]; then
@@ -42,10 +42,6 @@ if [ "${MARSV2_TASK_TYPE}" != "jupyter" ]; then
   if [ -a /marsv2/scripts/waiting_memory_free.py ]; then
     python3 -u /marsv2/scripts/waiting_memory_free.py
   fi
-fi
-
-if [[ -n "${MARSV2_GIT_REMOTE_REPO}" ]]; then
-  source /marsv2/scripts/init_git_repo.sh
 fi
 
 # 根据用户提交的任务生成的脚本

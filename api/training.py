@@ -17,16 +17,6 @@ async def fail_task(rank: int, t: TrainingTask=Depends(get_api_task()), hw_check
     if err_msg:  # 这肯定是ib或者ecc error传过来的
         # 不发告警，一切都由主动防御来处理
         await redis.lpush('fail_task_node_err_channel', json.dumps({'id': t.id, 'err_msg': err_msg, 'rank': rank}))
-    stop_code = 0
-    recorded_stop_code = await redis.get(f'lifecycle:{t.id}:stop_code')
-    if recorded_stop_code:
-        for code in recorded_stop_code.decode().strip().split('\n'):
-            stop_code |= int(code)
-    if stop_code & STOP_CODE.MANUAL_STOP:
-        return {
-            'success': 1,
-            'msg': '用户调用了 stop 接口，不再处理 hook failed'
-        }
     register_archive(t, sign='id')
     t.re_impl(TaskApiImpl).update_pod_status(rank=rank, status='failed')
     remove_archive_locally(t)

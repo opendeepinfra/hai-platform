@@ -2,7 +2,6 @@
 from functools import wraps
 
 import ujson
-from prometheus_client import Summary
 
 from db import redis_conn, a_redis
 from logm import logger
@@ -50,26 +49,9 @@ def async_redis_cached(ttl_in_sec=None, enable_fallback=True):
                 except Exception as e:
                     logger.exception(e)
                     if enable_fallback and (fallback_data := await a_redis.get(fallback_key)):
-                        logger.f_error(f'{coro_func.__name__} 查询最新数据失败: {e}, 使用 redis 中的旧数据', frequency_limit=60)
+                        logger.warning(f'{coro_func.__name__} 查询最新数据失败: {e}, 使用 redis 中的旧数据')
                         result = ujson.loads(fallback_data)
             return result
         return wrapper
 
     return decorator
-
-
-def record_latency(func):
-    """ 记录执行时间到 prometheus 的 decorator """
-    summary = Summary(f'platform_func_latency_{func.__name__}', f'execution latency of method {func.__name__}')
-    return summary.time()(func)
-
-
-def async_record_latency(coro_func):
-    """ 记录执行时间到 prometheus 的 decorator """
-    summary = Summary(f'platform_func_latency_{coro_func.__name__}', f'execution latency of method {coro_func.__name__}')
-    @wraps(coro_func)
-    async def wrapper(*args, **kwargs):
-        with summary.time():
-            return_value = await coro_func(*args, **kwargs)
-        return return_value
-    return wrapper

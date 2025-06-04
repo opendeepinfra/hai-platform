@@ -4,25 +4,21 @@ import ujson
 import time
 
 from .base import ListWatcher
-from logm import log_stage
+from logm import logger, log_stage
 from base_model.training_task import TrainingTask
 from server_model.auto_task_impl import AutoTaskSchemaImpl
 from server_model.pod import Pod
 from roman_parliament import archive_dict
 from db import redis_conn
-from .utils import all_corev1, all_custom_corev1
+from .utils import v1, custom_v1
 from k8s.podstate_utils import get_pod_state
 
 module = os.environ.get('POD_NAME', 'k8swatcher-0')
 
 
 class PodListWatcher(ListWatcher):
-    def __init__(self, namespaces=None, label_selector=None, field_selector=None, process_interval=10):
-        list_watch_funcs = {
-            host: (all_custom_corev1[host].list_namespaced_pod, all_corev1[host].list_namespaced_pod)
-            for host in all_custom_corev1.keys()
-        }
-        super().__init__('pod', list_watch_funcs, namespaces, label_selector, field_selector, process_interval)
+    def __init__(self, namespace=None, label_selector=None, field_selector=None, process_interval=10):
+        super().__init__('pod', custom_v1.list_namespaced_pod, v1.list_namespaced_pod, namespace, label_selector, field_selector, process_interval)
         self.old_pods_namelist = set()
         self.last_redis_update_time = time.time()
         self.last_task_set = set()
@@ -36,7 +32,7 @@ class PodListWatcher(ListWatcher):
     def _update_pods(self):
         keys = list(filter(lambda x: TrainingTask.__name__ in x, archive_dict.keys()))
         if self.count % 1000 == 0:
-            self.log_info(f'运行了 [{self.count + 1}] 次 当前存活id长度: [{len(keys)}]')
+            logger.info(f'运行了 [{self.count + 1}] 次 当前存活id长度: [{len(keys)}]')
 
         all_task_info = []
         removed_pod_ids = []
@@ -56,15 +52,15 @@ class PodListWatcher(ListWatcher):
         remove_task_set = self.last_task_set - task_set
         for sk, info in zip([add_task_set, remove_task_set], ['新增', '删除']):
             if (lsk := len(sk)) > 0:
-                self.log_info(f'当前 {info} id: 长度 [{lsk}]，详情 {sk}')
+                logger.info(f'当前 {info} id: 长度 [{lsk}]，详情 {sk}')
         self.last_task_set = task_set
         # 打印删除的细节
         if (len_rm_keys := len(removed_pod_ids)) > 0:
-            self.log_info(f'本次通知删除id len: [{len_rm_keys}], ids: {sorted(removed_pod_ids)}')
+            logger.info(f'本次通知删除id len: [{len_rm_keys}], ids: {sorted(removed_pod_ids)}')
         self.count += 1
 
     def process(self):
-        self._data_copied = {k: v.copy() for k, v in self._data.items()}
+        self._data_copied = self._data.copy()
         self.process_pod_update()
         self.process_pod_exit()
         self.process_logforest()
@@ -72,10 +68,7 @@ class PodListWatcher(ListWatcher):
     @log_stage(module)
     def process_pod_update(self):
         # task pods has label compute_node=true
-        self.current_task_list = [
-            k for data in self._data_copied.values() for k, v in data.items()
-            if v['metadata'].get('labels', {}).get('compute_node', '') == 'true'
-        ]
+        self.current_task_list = [k for k, v in self._data_copied.items() if v['metadata'].get('labels', {}).get('compute_node', '') == 'true']
 
         # 只有pod变化时，才需要触发update_pods
         self._update_pods()
@@ -97,7 +90,7 @@ class PodListWatcher(ListWatcher):
                 'status': get_pod_state(pod_dict=event)['status'],
                 'start_time': None
             }
-            for data in self._data_copied.values() for pod_id, event in data.items()
+            for pod_id, event in self._data_copied.items()
         }
         pod_id_list = list(result.keys())
         for pod_id in pod_id_list:
@@ -110,13 +103,12 @@ class PodListWatcher(ListWatcher):
 
     @log_stage(module)
     def process_pod_exit(self):
-        for data in self._data_copied.values():
-            for k, v in data.items():
-                if v['metadata'].get('labels', {}).get('compute_node', '') == 'true' and k not in self.recorded_exit_pod:
-                    try:
-                        exit_code = v['status']['containerStatuses'][0]['state']['terminated']['exitCode']
-                        Pod.find_pods_by_pod_id(k)[0].update(('exit_code',), (str(exit_code),))
-                        self.recorded_exit_pod.add(k)
-                        self.log_info(f'更新pod {k} 退出码 {exit_code}')
-                    except:
-                        pass
+        for k, v in self._data_copied.items():
+            if v['metadata'].get('labels', {}).get('compute_node', '') == 'true' and k not in self.recorded_exit_pod:
+                try:
+                    exit_code = v['status']['containerStatuses'][0]['state']['terminated']['exitCode']
+                    Pod.find_pods_by_pod_id(k)[0].update(('exit_code',), (str(exit_code),))
+                    self.recorded_exit_pod.add(k)
+                    logger.info(f'更新pod {k} 退出码 {exit_code}')
+                except:
+                    pass

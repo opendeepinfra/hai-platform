@@ -8,8 +8,9 @@ import pandas as pd
 from fastapi import Depends
 
 from conf import CONF
-from api.task.service_task import QUOTA_SPOT_JUPYTER, QUOTA_DEDICATED_JUPYTER, get_spot_jupyter_status, VISIBLE_TASK_TAG
-from api.depends import JUPYTER_ADMIN_GROUP, get_api_user_with_token
+from api.task.service_task import JUPYTER_DELETED_MASK_GROUP, JUPYTER_ADMIN_GROUP, \
+    QUOTA_SPOT_JUPYTER, QUOTA_DEDICATED_JUPYTER, get_user, get_spot_jupyter_status, \
+    check_user_task
 from conf.flags import QUE_STATUS, TASK_TYPE, EXP_STATUS
 from db import MarsDB
 from k8s.async_v1_api import async_get_nodes_df
@@ -28,8 +29,8 @@ def construct_sql(filters=None, fullmatch_filters=None, universal_filter_keyword
         f''' "{column}" = '{fullmatch_filters[column]}' '''
         for column in columns if fullmatch_filters.get(column) is not None
     ])
-    inner_filter_sql = make_filter_sql(columns=['group', 'nb_name'])
-    outer_filter_sql = make_filter_sql(columns=['node', 'user_name', 'status'])
+    inner_filter_sql = make_filter_sql(columns=['user_name', 'nb_name'])
+    outer_filter_sql = make_filter_sql(columns=['node', 'group', 'status'])
 
     if universal_filter_keywords is not None and len(universal_filter_keywords) > 0:
         universal_filter_sql = 'and'.join(
@@ -50,30 +51,37 @@ def construct_sql(filters=None, fullmatch_filters=None, universal_filter_keyword
                     "assigned_nodes"[1] as "node",
                     "t_rc"."runtime_config_json",
                     case
-                        when "pod"."status" is null then
+                        when "t"."status" is null then
                             case
                                 when "task_ng"."queue_status" = 'finished' then 'stopped'
                                 else "task_ng"."queue_status"
                             end
-                        when "pod"."status" like '%_terminating' then 'terminating'
-                        when "pod"."status" = any('{{ {",".join(EXP_STATUS.FINISHED)} }}'::varchar[]) then 'stopped'
-                        else "pod"."status"
+                        when "t"."status" like '%_terminating' then 'terminating'
+                        when "t"."status" = any('{{ {",".join(EXP_STATUS.FINISHED)} }}'::varchar[]) then 'stopped'
+                        else "t"."status"
                     end as "status"
                 from "task_ng"
-                inner join "task_tag" "tt" on "task_ng"."chain_id" = "tt"."chain_id"
-                left join "pod_ng" "pod" on "pod"."task_id" = "task_ng"."id" and "pod"."job_id" = 0
+                left join (
+                    select "task_id", "status"
+                    from "pod_ng"
+                    where "task_id" in (
+                        select max("id") from "task_ng" where "task_type" = %s {inner_filter_sql and f'and {inner_filter_sql}'}
+                        group by "nb_name", "user_name"
+                    ) and "job_id" = 0
+                    ) as "t" on "t"."task_id" = "task_ng"."id"
                 left join (
                     select "id", coalesce(jsonb_object_agg("source", "config_json") filter ( where "source" is not null ), '{{}}'::jsonb) as "runtime_config_json"
                     from (
                         select "task_ng"."id", "tr"."source", "tr"."config_json"
                         from "task_ng"
-                        inner join "task_tag" "tt" on "task_ng"."chain_id" = "tt"."chain_id"
                         left join "task_runtime_config" "tr" on "tr"."task_id" = "task_ng"."id" or "tr"."chain_id" = "task_ng"."chain_id"
-                        where "task_type" = '{TASK_TYPE.JUPYTER_TASK}' and last_task = true and "tt"."tag" = '{VISIBLE_TASK_TAG}'
+                        where "task_type" = 'jupyter' and "group" != 'jupyter_deleted_mask_group'
                     ) as "t" group by "id"
                 ) "t_rc" on "t_rc"."id" = "task_ng"."id"
-                where "task_type" = 'jupyter' and "last_task" = true and "tt"."tag" = '{VISIBLE_TASK_TAG}' 
-                    {('and ' + inner_filter_sql) if inner_filter_sql else ''}
+                where "task_ng"."id" in (
+                    select max("id") from "task_ng" where "task_type" = %s {inner_filter_sql and f'and {inner_filter_sql}'}
+                    group by "nb_name", "user_name"
+                ) and "group" != %s 
             ) as "res_before_concat"
         ) as "res" {outer_filter_sql and f'where {outer_filter_sql}'}
     """
@@ -83,7 +91,7 @@ async def async_get_jupyter_task_df(limit=1000, offset=0, filters=None, fullmatc
     sql = f"""
         {construct_sql(filters, fullmatch_filters, universal_filter_keywords, select_count=False)}
     """
-    res = await MarsDB().a_execute(sql)
+    res = await MarsDB().a_execute(sql, (TASK_TYPE.JUPYTER_TASK, TASK_TYPE.JUPYTER_TASK, JUPYTER_DELETED_MASK_GROUP))
     df = pd.DataFrame([{**r} for r in res])
     if len(df) == 0:
         df = pd.DataFrame([], columns=['id', 'nb_name', 'user_name', 'code_file', 'workspace', 'config_json',
@@ -135,7 +143,7 @@ def get_jupyter_tasks_info(jupyter_task_df: pd.DataFrame, node_ip):
 
 async def async_get_num_jupyter_tasks(filters=None, fullmatch_filters=None, universal_filter_keywords=None):
     sql = construct_sql(filters, fullmatch_filters, universal_filter_keywords, select_count=True)
-    res = await MarsDB().a_execute(sql)
+    res = await MarsDB().a_execute(sql, (TASK_TYPE.JUPYTER_TASK, TASK_TYPE.JUPYTER_TASK, JUPYTER_DELETED_MASK_GROUP))
     return next(res).count
 
 
@@ -161,7 +169,7 @@ async def async_get_cluster_status():
     return {'resource': resource, 'node_ip': node_ip}
 
 
-async def data_api(user: User = Depends(get_api_user_with_token())):
+async def data_api(user: User = Depends(get_user)):
     # 处理 Jupyter quota
     await user.quota.create_quota_df()
     jupyter_quota = user.quota.jupyter_quota
@@ -210,7 +218,7 @@ async def data_api(user: User = Depends(get_api_user_with_token())):
         'can_suspend': user.in_group('can_suspend'),
     }
     result.update(await extra_data(user))
-    if user.is_external:
+    if not user.is_internal:
         result.update({
             'spot_jupyter_quota': int(user.quota.quota(QUOTA_SPOT_JUPYTER)),
             'spot_jupyter_status': await get_spot_jupyter_status(),
@@ -224,10 +232,10 @@ async def data_api(user: User = Depends(get_api_user_with_token())):
     }
 
 
-async def all_tasks_api(user: User = Depends(get_api_user_with_token(allowed_groups=[JUPYTER_ADMIN_GROUP])),
-                        page: int = 1, page_size: int = 1000,
-                        user_name: str = None, nb_name: str = None, node: str = None,
-                        group: str = None, status: str = None, universal_filter_keywords: str = None):
+async def all_tasks_api(user: User = Depends(get_user), page: int = 1, page_size: int = 1000,
+                    user_name: str = None, nb_name: str = None, node: str = None,
+                    group: str = None, status: str = None, universal_filter_keywords: str = None):
+    check_user_task(user)
     cluster_df_task = asyncio.create_task(async_get_nodes_df())
     filters = {'user_name':user_name, 'nb_name':nb_name, 'node':node, 'group':group, 'status':status}
     uni_keywords = universal_filter_keywords.split() if universal_filter_keywords is not None else []

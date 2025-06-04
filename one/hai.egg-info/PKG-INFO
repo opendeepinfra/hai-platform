@@ -1,0 +1,8 @@
+Metadata-Version: 2.1
+Name: hai
+Version: 1.0.0+1300adc
+Summary: Highflyer AI Platform
+Home-page: https://github.com/HFAiLab
+Author: HFAiLab
+License: MIT
+Requires-Python: >=3.8

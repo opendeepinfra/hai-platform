@@ -5,7 +5,6 @@ import time
 from typing import Union
 
 from db import redis_conn
-from logm import logger
 from .table_config import spawn_private_tables
 from .mq_utils import WatchThread
 from .user_data import DBUserData, UserData
@@ -78,11 +77,6 @@ def async_sync_from_db_afterwards(changed_tables):
     return decorator
 
 
-def update_user_last_activity(user_name: str, from_shared_task=False):
-    try:
-        # 通过 redis 通知 user data 的 sync point 来修改
-        redis_conn.lpush('user_data_last_activity_update', pickle.dumps({
-            'user_name': user_name, 'ts': time.time(), 'from_shared_task': from_shared_task
-        }))
-    except Exception as e:
-        logger.error(f'更新 user last activity 失败 {e}')
+def update_user_last_activity(user_name: str):
+    # 通过 redis 通知 user data 的 sync point 来修改
+    redis_conn.lpush('user_data_last_activity_update', pickle.dumps({'user_name': user_name, 'ts': time.time()}))

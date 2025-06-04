@@ -3,7 +3,7 @@ from abc import ABC
 
 from conf import CONF
 from conf.flags import STOP_CODE, CHAIN_STATUS, TASK_OP_CODE
-from db import a_redis as redis, MarsDB
+from db import a_redis as redis
 from utils import get_task_node_idx_log
 from server_model.pod import Pod
 from server_model.training_task_impl.additional_property_impl import \
@@ -26,14 +26,10 @@ class TaskApiImpl(AdditionalPropertyImpl, ABC):
         exit_code = ''
         stop_code = 0
         rst_last_seen = None
+        task_id_list = sorted(task.id_list)
         last_seen_id = 0 if last_seen is None else last_seen.get('id', 0)
         current_seen_id = last_seen_id
-        if service is not None:
-            suffix_filter = f'{service}.service_log'
-            task_id_list = [task.id]    # 服务日志只查询当前任务, 不查询整个 chain
-        else:
-            suffix_filter = f'#{rank}'
-            task_id_list = sorted(task.id_list)
+        suffix_filter = f'{service}.service_log' if service is not None else f'#{rank}'
         for task_id in task_id_list:
             if task_id < last_seen_id:
                 continue
@@ -62,7 +58,6 @@ class TaskApiImpl(AdditionalPropertyImpl, ABC):
             "exit_code": exit_code,
             "error_msg": error_msg,
             "data": "\n".join([data for data in data_list if data]) if data_list else "还没产生日志",
-            "restart_log": await self.restart_log(),
             "success": 1,
             "msg": "get log successfully",
             "last_seen": rst_last_seen
@@ -93,28 +88,6 @@ class TaskApiImpl(AdditionalPropertyImpl, ABC):
             "success": 1,
             "data": data
         }
-
-    async def restart_log(self):
-        try:
-            task = self.task
-            restart_log = await MarsDB().a_execute(f"""
-            select
-                "task_id",
-                json_agg(json_build_object(
-                    'rule', "rule",
-                    'reason', "reason",
-                    'result', "result"
-                )) as "restart_log"
-            from "task_restart_log"
-            where "task_id" in ({','.join(str(t) for t in task.id_list)})
-            group by "task_id"
-            """)
-            return {
-                r.task_id: r.restart_log for r in restart_log
-            }
-        except Exception as e:
-            print(e)
-            return {}
 
     async def search_in_global(self, content):
         """

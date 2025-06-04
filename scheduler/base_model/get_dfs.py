@@ -36,13 +36,7 @@ def get_task_df():
             coalesce(jsonb_object_agg("tr"."source", "tr"."config_json") filter ( where "tr"."source" is not null ), '{{}}'::jsonb) as "runtime_config_json"
         from (
             select
-                "id", "nb_name", "user_name", "code_file", "group",
-                "nodes" - coalesce(array_length(array (select unnest("assigned_nodes") intersect select unnest("succeeded_assigned_nodes")), 1), 0) as "nodes",
-                case
-                    when array_length("succeeded_assigned_nodes", 1) is null then "assigned_nodes"
-                    else array (select unnest("assigned_nodes") except select unnest("succeeded_assigned_nodes"))
-                end as "assigned_nodes",
-                "backend", "task_type", "queue_status", "priority", "first_id",
+                "id", "nb_name", "user_name", "code_file", "group", "nodes", "assigned_nodes", "task_type", "queue_status", "priority", "first_id",
                 extract(epoch from (current_timestamp - "begin_at")) as "running_seconds", "chain_id", "tmp"."config_json", "role" as "user_role",
                 '{ASSIGN_RESULT.NOT_SURE}' as "assign_result", '{MATCH_RESULT.NOT_SURE}' as "match_result", '' as "scheduler_msg",
                 extract(epoch from (current_timestamp - "created_at")) as "created_seconds", "worker_status", 
@@ -54,24 +48,20 @@ def get_task_df():
                 case when "queue_status" = '{QUE_STATUS.SCHEDULED}' then "current_schedule_zone" end as "current_schedule_zone", "client_group"
             from (
                 select
-                    "id", "nb_name", "unfinished_task_ng"."user_name", "code_file", "group", "nodes", "assigned_nodes", "backend", "task_type",
+                    "id", "nb_name", "unfinished_task_ng"."user_name", "code_file", "group", "nodes", "assigned_nodes", "task_type",
                     "queue_status", "priority", "unfinished_task_ng"."begin_at", "notes", "chain_id", "config_json", "user"."role", "first_id",
                     "unfinished_task_ng"."created_at", "worker_status", "config_json"->>'schedule_zone' as "schedule_zone",
                     "config_json"->'client_group' as "client_group", "host"."schedule_zone" as "current_schedule_zone",
-                    coalesce(array_agg("pod_ng"."node") filter (where "pod_ng"."status" = '{EXP_STATUS.SUCCEEDED}'), array[]::varchar[]) as "succeeded_assigned_nodes",
                     rank() over (partition by "unfinished_task_ng"."user_name", "group" order by first_id asc) as "rank"
                 from "unfinished_task_ng"
                 inner join "user" on "unfinished_task_ng"."user_name" = "user"."user_name"
                 left join "host" on "unfinished_task_ng"."assigned_nodes"[1] = "host"."node"
-                left join "pod_ng" on "unfinished_task_ng"."id" = "pod_ng"."task_id" and "pod_ng"."status" = '{EXP_STATUS.SUCCEEDED}'
-                group by "unfinished_task_ng"."id", "host"."node", "user"."role"
             ) as "tmp"
         ) as "tmp"
         left join "task_runtime_config" "tr" on "tr"."task_id" = "tmp"."id" or "tr"."chain_id" = "tmp"."chain_id"
-        where "nodes" > 0
         group by
             "tmp"."id", "tmp"."chain_id", "tmp"."nb_name", "tmp"."user_name", "tmp"."code_file", "tmp"."group", "tmp"."nodes",
-            "tmp"."assigned_nodes", "tmp"."backend", "tmp"."task_type", "tmp"."queue_status", "tmp"."priority", "tmp"."first_id", "tmp"."config_json",
+            "tmp"."assigned_nodes", "tmp"."task_type", "tmp"."queue_status", "tmp"."priority", "tmp"."first_id", "tmp"."config_json",
             "tmp"."worker_status", "tmp"."schedule_zone", "tmp"."current_schedule_zone", "tmp"."client_group",
             "tmp"."running_seconds", "tmp"."user_role", "tmp"."assign_result", "tmp"."match_result",
             "tmp"."scheduler_msg", "tmp"."created_seconds"

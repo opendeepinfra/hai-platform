@@ -8,7 +8,6 @@ from db import redis_conn, MarsDB
 from base_model.base_task import BaseTask
 from conf.flags import QUE_STATUS, TASK_PRIORITY
 from server_model.task_runtime_config import TaskRuntimeConfig
-from server_model.task_impl import DbOperationImpl
 from scheduler.base_model import Subscriber, ASSIGN_RESULT, MATCH_RESULT, TickData
 
 
@@ -62,11 +61,7 @@ class MatcherLogger(Subscriber):
                 if 'NotReady' in tick_data.resource_df[tick_data.resource_df.name.isin(row.assigned_nodes)].status.to_list():
                     redis_conn.lpush('node_error_task_channel', row.id)
                 self.warning(fmt_log(row))
-                task = BaseTask(**row)
-                task.re_impl(DbOperationImpl)
-                if row.user_name != 'lwf':
-                    self.f_warning(row.scheduler_msg, task=BaseTask(**row))
-                task.set_restart_log(rule='节点异常', reason=row.scheduler_msg, result='智能重启成功')
+                self.f_warning(row.scheduler_msg, task=BaseTask(**row))
         # 这里打印调度认为结束了的任务
         for _, row in last_tick_data.task_df[~last_tick_data.task_df.index.isin(tick_data.task_df.index)].iterrows():
             row.scheduler_msg = "任务结束了"

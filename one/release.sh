@@ -10,7 +10,7 @@ ls -A | grep -vE "^${BUILD_DIR}$|\.git*|__pycache__" | awk '{print $1}' | xargs 
 cd ${BUILD_DIR}
 
 echo "STEP: build hai-platform ${RELEASE_VERSION}"
-if [[ ${BUILD_TRAIN_IMAGE} == "1" ]]; then
+if [[ ${BUILD_HAI_ENV} == "1" ]]; then
 cat >> Dockerfile << EOF
 #### create haienv 202207 ####
 RUN ["/bin/bash", "-c", "export HAIENV_PATH=/hf_shared/hfai_envs/platform && \
@@ -27,9 +27,6 @@ RUN --mount=type=cache,sharing=private,target=/root/.cache/pip --mount=type=bind
     sed -i '/def _cache_set(self, cache_url, request, response, body=None, expires_time=None):/a\\\        expires_time=None' \`python -c 'import pip._vendor.cachecontrol.controller as cc; print(cc.__file__)'\` && \
     pip install -r /tmp/requirements-202207.txt --no-warn-conflicts --no-deps"]
 EOF
-
-sed -i 's/ ubuntu:20.04/ nvcr.io\/nvidia\/cuda:11.3.0-devel-ubuntu20.04/' Dockerfile
-RELEASE_VERSION=${RELEASE_VERSION}-202207
 fi
 
 DOCKER_BUILDKIT=1 docker build . -t ${IMAGE_REPO}:${RELEASE_VERSION} --build-arg HAI_VERSION=${RELEASE_VERSION} -f Dockerfile --progress plain

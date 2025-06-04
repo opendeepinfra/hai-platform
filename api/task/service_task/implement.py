@@ -3,26 +3,29 @@
 from .default import *
 from .custom import *
 
+import pickle
 from typing import Dict
-from fastapi import Depends
+from fastapi import Depends, HTTPException, Request
 from munch import Munch
 
-from api.depends import get_api_task, get_api_user_with_token
 from api.task_schema import TaskSchema
-from api.operation import check_restart, check_environment_get_err, check_services_config_get_err, check_sidecar_get_err
+from api.operation import check_restart, check_environment_get_err, check_services_config_get_err
+from api.task.experiment import stop_task, suspend_task_by_name
 from api.utils import failed_response
 from base_model.base_task import BaseTask
+from base_model.training_task import TrainingTask
 from conf import MARS_GROUP_FLAG, CONF
-from conf.flags import QUE_STATUS, TASK_TYPE, TASK_PRIORITY, USER_ROLE
-from db import MarsDB
+from conf.flags import QUE_STATUS, TASK_TYPE, TASK_PRIORITY, USER_ROLE, TASK_OP_CODE
+from db import redis_conn, MarsDB
 from k8s.async_v1_api import async_get_nodes_df, async_set_node_label
-from server_model.selector import AioBaseTaskSelector, AioTrainingTaskSelector
+from server_model.auto_task_impl import AutoTaskApiImpl
+from server_model.selector import AioBaseTaskSelector, AioUserSelector
 from server_model.task_impl import AioDbOperationImpl
 from server_model.user import User
 
+JUPYTER_DELETED_MASK_GROUP = 'jupyter_deleted_mask_group'
 QUOTA_SPOT_JUPYTER = 'spot_jupyter'
 QUOTA_DEDICATED_JUPYTER = 'dedicated_jupyter'
-VISIBLE_TASK_TAG = '_visible_jupyter'
 SHARED_NODE_GROUP = CONF.jupyter.shared_node_group_prefix
 
 
@@ -71,17 +74,21 @@ async def check_external_dedicated_jupyter(user, task_schema: TaskSchema):
     return True, "允许创建"
 
 
-async def clear_visible_tag(nb_name: str, user_name: str):
-    sql = f'''
-        delete from "task_tag" where "chain_id" in (
-            select "chain_id" from "task_ng"
-            where "nb_name" = %s and "task_ng"."user_name" = %s and "task_type" = '{TASK_TYPE.JUPYTER_TASK}'
-                and "task_ng"."chain_id" in (   -- task_ng 表较大, 进一步过滤加快速度
-                    select "chain_id" from "task_tag" where "user_name" = %s and "tag" = '{VISIBLE_TASK_TAG}'
-                )
-        ) and "tag" = '{VISIBLE_TASK_TAG}'
-    '''
-    await MarsDB().a_execute(sql, params=(nb_name, user_name, user_name))
+async def create_service_task_api(
+        request: Request,
+        task_schema: TaskSchema,
+        user_name: str = None,
+        api_user: User = Depends(get_user),
+    ):
+        if user_name is not None and api_user.user_name != user_name:     # 管理员页面为其他人启动容器时
+            if not api_user.in_group(JUPYTER_ADMIN_GROUP):
+                raise HTTPException(403, detail='无权为他人创建容器')
+            user = await AioUserSelector.find_one(user_name=user_name)
+            if user is None:
+                raise HTTPException(404, detail=f'用户 [{user_name}] 不存在')
+        else:
+            user = api_user
+        return await create_service_task(user=user, task_schema=task_schema, raw_task_schema=await request.json())
 
 
 async def create_service_task(
@@ -101,10 +108,8 @@ async def create_service_task(
         if (task_schema.resource.cpu <= 0 or task_schema.resource.memory <= 0) \
                 and task_schema.resource.group.startswith(SHARED_NODE_GROUP):
             return failed_response(f'CPU 或 memory 参数不合法，需大于零')
-        if task_schema.resource.is_spot and task_schema.resource.group.startswith(SHARED_NODE_GROUP):
-            return failed_response('spot 容器不能创建在共享分组中')
         # 外部独占开发机申请前的检查
-        if user.is_external and not task_schema.resource.group.startswith(SHARED_NODE_GROUP):
+        if not user.is_internal and not task_schema.resource.group.startswith(SHARED_NODE_GROUP):
             success, msg = await check_external_dedicated_jupyter(user, task_schema)
             if not success:
                 return failed_response(msg)
@@ -118,7 +123,6 @@ async def create_service_task(
 
         if (err := check_services_config_get_err(task_schema.services, user)) is not None:
             return failed_response(err)
-
         task = BaseTask(
             implement_cls=AioDbOperationImpl, id=None, nb_name=task_schema.name, user_name=user.user_name,
             code_file='stub.sh', workspace='/marsv2/scripts',
@@ -137,14 +141,8 @@ async def create_service_task(
             priority=TASK_PRIORITY.AUTO.value, task_type=TASK_TYPE.JUPYTER_TASK, whole_life_state=0,
             mount_code=task_schema.options.get('mount_code', 2)
         )
-        task.user = user
-        if (err := await check_sidecar_get_err(task_schema, task)) is not None:
-            return {'success': 0, 'msg': err}
-
         try:
             task = await task.create(remote_apply=True)
-            await clear_visible_tag(nb_name=task.nb_name, user_name=task.user_name)
-            await task.tag_task(tag=VISIBLE_TASK_TAG, remote_apply=True)
         except Exception:
             if not task:
                 return {
@@ -154,21 +152,63 @@ async def create_service_task(
         return {
             'success': 1,
             'msg': '直接插入队列成功，请等待调度',
-            'taskid': task.id,
-            'task': task.trait_dict()
+            'taskid': task.id
         }
 
 
-async def delete_task_api(task: BaseTask = Depends(get_api_task())):
-    task.re_impl(AioDbOperationImpl)
-    await task.untag_task(tag=VISIBLE_TASK_TAG)
+async def delete_task_api(task: BaseTask = Depends(get_task), user: User = Depends(get_user)):
+    check_user_task(user, task)
+    task = BaseTask(
+            implement_cls=AioDbOperationImpl, id=None, nb_name=task.nb_name, user_name=task.user_name,
+            code_file='/marsv2/scripts/start_jupyter.sh', workspace='/marsv2/scripts', config_json={},
+            group=JUPYTER_DELETED_MASK_GROUP, nodes=1, backend=JUPYTER_DELETED_MASK_GROUP, queue_status=QUE_STATUS.FINISHED,
+            priority=TASK_PRIORITY.AUTO.value, task_type=TASK_TYPE.JUPYTER_TASK, whole_life_state=0, mount_code=2
+        )
+    try:
+        task = await task.create(remote_apply=True)
+    except Exception:
+        return {
+            'success': 0,
+            'msg': '未能在数据库中成功创建队列，请联系系统组'
+        }
     return {
         'success': 1,
         'msg': f"delete {task.nb_name} 成功"
     }
 
 
-async def move_node_api(group: str, user: User = Depends(get_api_user_with_token())):
+async def stop_service_task_api(task: TrainingTask = Depends(get_task), user: User = Depends(get_user)):
+    check_user_task(user, task)
+    res = await stop_task(TASK_OP_CODE.STOP, task)
+    if res['success'] == 0:
+        return {
+            'success': 0,
+            'msg': res['msg'],
+        }
+    return {
+        'success': 1,
+        'msg': f"对 {task.nb_name} 发送停止信号成功",
+    }
+
+
+async def restart_service_task_api(task: TrainingTask = Depends(get_task), version: str = "old", user: User = Depends(get_user)):
+    check_user_task(user, task)
+    if version == 'old':
+        return {
+            'success': 0,
+            'msg': '请刷新页面，使用新的 studio 来创建容器'
+        }
+    task.re_impl(AutoTaskApiImpl)
+    res = await suspend_task_by_name(task, task.user)
+    if res['success'] == 0:
+        return res
+    return {
+        'success': 1,
+        'msg': f'对 {task.nb_name} 发送重启信号成功',
+    }
+
+
+async def move_node_api(group: str, user: User = Depends(get_user)):
     await user.quota.create_quota_df()
     if not user.in_group('can_suspend'):
         return {
@@ -213,3 +253,20 @@ async def move_node_api(group: str, user: User = Depends(get_api_user_with_token
     }
 
 
+async def service_control_api(service: str, action: str, task: TrainingTask = Depends(get_task),
+                              user: User = Depends(get_user)):
+    check_user_task(user, task)
+    task.re_impl(AutoTaskApiImpl)
+    if task.runtime_config_json.get('service_task', {}).get('version', 0) < 1:
+        return {
+            'success': 0,
+            'msg': '容器版本较老, 不支持此功能, 请重启容器后重试'
+        }
+    if action not in ['start', 'stop', 'restart']:
+        raise HTTPException(400, detail=f'不支持的操作: {action}')
+    msg = {'service': service, 'action': action}
+    redis_conn.lpush(f'manager_service_control:{task.id}', pickle.dumps(msg))
+    return {
+        'success': 1,
+        'msg': '已成功发送信号, 检查容器日志以查看操作结果'
+    }

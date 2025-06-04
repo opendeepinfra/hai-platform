@@ -69,7 +69,7 @@ class Monitor(BaseProcessor):
                     self.f_error(log_str)
                 self.upstream_seqs[name] = tick_data.seq
             tick_metrics = {**{
-                f'{name},{k}': v for k, v in tick_data.metrics.items()
+                f'{name},{k}': v for k, v in module_config['metric_conn'].get().items()
             }, **tick_metrics}
             registered_global_config = tick_data.extra_data.get('registered_global_config', {})
             for k, v in registered_global_config.items():

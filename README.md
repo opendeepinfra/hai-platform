@@ -1,15 +1,6 @@
-# HAI Platform
-
-![Header](https://img.shields.io/badge/-hai--platform-orange)
-[![License](https://img.shields.io/badge/license-LGPL-4EB1BB)](https://www.gnu.org/licenses/lgpl-3.0.en.html)
-
-
-HAI 分时调度训练平台, 可通过 `docker-compose` 或 `k8s` 部署，提供功能：
-- 训练任务分时调度
-- 训练任务管理
-- jupyter 开发容器管理
-- [studio用户界面](https://github.com/HFAiLab/hai-platform-studio)
-- haienv 运行环境管理
+# Highflyer's AI Platform 容器化搭建指南
+您可以将幻方的分时调度训练平台打包成方便一键部署的镜像，可通过 `docker-compose` 或 `k8s` 部署.
+可以支持大约 1k 张加速卡的深度学习训练小规模集群.
 
 ## 外部依赖
 1. 一个集中存储，如 `nfs`, `ceph`, `weka`
@@ -22,39 +13,25 @@ HAI 分时调度训练平台, 可通过 `docker-compose` 或 `k8s` 部署，提�
 
 ## 快速上手
 1. 构建
+```shell
+# replace IMAGE_REPO with your own repo
+IMAGE_REPO=registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform bash one/release.sh
+build hai success:
+  hai-platform image: registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform:fa07f13
+  hai-cli whl:
+    /home/hai-platform/build/hai-1.0.0+fa07f13-py3-none-any.whl
+    /home/hai-platform/build/haienv-1.4.1+fa07f13-py3-none-any.whl
+    /home/hai-platform/build/haiworkspace-1.0.0+fa07f13-py3-none-any.whl
+```
 
-    构建 all-in-one hai-platform 镜像
+2. 安装 hai-cli 命令行
+```shell
+pip3 install /home/hai-platform/build/hai-1.0.0+fa07f13-py3-none-any.whl
+pip3 install /home/hai-platform/build/haienv-1.4.1+fa07f13-py3-none-any.whl
+pip3 install /home/hai-platform/build/haiworkspace-1.0.0+fa07f13-py3-none-any.whl
+```
 
-    注：如需包含 haienv 202207 运行环境（包含cuda, torch），以同时作为训练任务镜像，需 `export BUILD_TRAIN_IMAGE=1`；如需自定义训练任务镜像，请参考 [附录：初始化数据库](#初始化数据库) 中 `train_environment` 的配置说明。
-    ```shell
-    # replace IMAGE_REPO with your own repo
-    $ IMAGE_REPO=registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform bash one/release.sh
-      build hai success:
-        hai-platform image: registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform:fa07f13
-        hai-cli whl:
-          /home/hai-platform/build/hai-1.0.0+fa07f13-py3-none-any.whl
-          /home/hai-platform/build/haienv-1.4.1+fa07f13-py3-none-any.whl
-          /home/hai-platform/build/haiworkspace-1.0.0+fa07f13-py3-none-any.whl
-    ```
-
-    安装 hai-cli 命令行
-    ```shell
-    pip3 install /home/hai-platform/build/hai-1.0.0+fa07f13-py3-none-any.whl
-    pip3 install /home/hai-platform/build/haienv-1.4.1+fa07f13-py3-none-any.whl
-    pip3 install /home/hai-platform/build/haiworkspace-1.0.0+fa07f13-py3-none-any.whl
-    ```
-
-    也可以使用预构建的镜像和命令行：
-    ```shell
-    # 仅包含 hai-platform
-    registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform:latest
-    # 包含 hai-platform 和 haienv 202207 运行环境（包含cuda, torch）
-    registry.cn-hangzhou.aliyuncs.com/hfai/hai-platform:latest-202207
-
-    pip3 install hai --extra-index-url https://pypi.hfai.high-flyer.cn/simple --trusted-host pypi.hfai.high-flyer.cn -U
-    ```
-
-2. 部署 hai-platform 到 k8s 集群
+3. 部署 hai-platform 到 k8s 集群
 
 - 获取使用帮助
   ```shell
@@ -84,11 +61,9 @@ HAI 分时调度训练平台, 可通过 `docker-compose` 或 `k8s` 部署，提�
     step 3: "hai-up run -c config.sh" to start the all-in-one hai-platform.
   ```
 
-- 按提示配置相关环境变量，如共享文件系统路径、节点分组信息、训练镜像、用户信息、挂载点等，确认无误后部署（如需自定义更多配置，可运行 `hai-up dryrun` 获取配置模板并自行修改，手动部署）
+- 按提示配置相关环境变量并启动
   ```shell
   hai-up config > config.sh
-  # customize config.sh
-
   hai-up run -c config.sh
   ```
 
@@ -103,12 +78,14 @@ HAI 分时调度训练平台, 可通过 `docker-compose` 或 `k8s` 部署，提�
   # 如置于其他路径，需要在pg数据库storage表中添加相应挂载项
   hai-cli python ${SHARED_FS_ROOT}/hai-platform/workspace/$(whoami)/test.py -- -n 1
   ```
+- 如需自定义配置，可运行 `hai-up dryrun` 获取配置模板并自行修改，手动部署
 
 - 如需停用hai-platform，运行 `hai-up down`
 
 
 ## 附录：配置说明
-`hai-up run/dryrun` 会创建 init.sql, override.toml 配置文件，以及部署到 k8s/docker-compose 的yaml文件，如有自定义配置需求，可自行修改。部分配置解释如下。
+`hai-up run/dryrun` 会创建 init.sql, override.toml 配置文件，以及部署到 k8s/docker-compose 的yaml文件.
+部分配置解释如下。
 
 ### 网络端口
 默认打开如下端口：
@@ -126,7 +103,7 @@ HAI 分时调度训练平台, 可通过 `docker-compose` 或 `k8s` 部署，提�
 
 ### 节点分组
 目前支持两类分组，TRAINING_GROUP, JUPYTER_GROUP，分别表示训练节点和jupyter节点。
-需要指定分组名，以及分组内节点列表，如：
+您需要指定分组名，以及分组内节点列表，如：
 ```shell
 export MARS_PREFIX="hai-platform-one"
 export TRAINING_GROUP="training"
@@ -137,7 +114,7 @@ export JUPYTER_NODES="cn-hangzhou.172.23.183.226"
 设置分组信息后，启动脚本会自动配置 k8s node 的 label 为 `${MARS_PREFIX}_mars_group=${TRAINING_GROUP}` 或 `${MARS_PREFIX}_mars_group=${JUPYTER_GROUP}`; 并给 `hai-platform` 的 `schduler` 设置调度分组，同时设置数据库中的quota
 
 ### 挂载点
-默认会挂载如下路径
+默认会挂挂载如下路径
 ```yaml
   - '${HAI_PLATFORM_PATH}/kubeconfig:/root/.kube:ro'                        # k8s config，必须挂载
   - '${HAI_PLATFORM_PATH}/log:/high-flyer/log'                              # platform 日志
@@ -223,8 +200,8 @@ ON CONFLICT DO NOTHING;
 
 INSERT INTO "train_environment" ("env_name", "image", "schema_template", "config")
 VALUES
-      -- 训练镜像，如自定义，需要满足 validate_image.sh 中镜像的条件
-      ('hai_base', '${TRAIN_IMAGE}', '', '{"environments": {}, "python": "/usr/bin/python3.8"}')
+      -- 系统自定义的镜像，可以基于 multi_gpu_runner_server 来做，或者参考 validate_image.sh 中镜像的条件
+      ('hai_base', '${BASE_IMAGE}', '', '{"environments": {}, "python": "/usr/bin/python3.8"}')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO "host" ("node", "gpu_num", "type", "use", "origin_group", "room")
@@ -280,16 +257,7 @@ ON CONFLICT DO NOTHING;
   [jupyter.builtin_services.jupyter.environ.external]
   JUPYTER_DIR = '${HAI_PLATFORM_PATH}/workspace/{user_name}/jupyter'
   [jupyter.ingress_host]
-  internal = '${INGRESS_HOST}'
-  external = '${INGRESS_HOST}'
+  hfhub = '${INGRESS_HOST}'
+  yinghuo = '${INGRESS_HOST}'
   studio = '${INGRESS_HOST}'
 ```
-
-### SSH 配置
-
-开发容器及 `hai-cli` 都提供了 SSH 相关的功能，但出于安全考虑目前任务容器中默认不启动 SSH 服务，也未为平台用户自动生成用于 SSH 连接的密钥。
-
-如果想要使用相关功能，可以按照如下步骤配置：
-1. 编写 SSH 服务的初始化脚本，用于在任务容器的初始化阶段完成配置 SSH Key、启动 SSH 服务等工作；
-2. 修改数据库的 `storage` 表，将此脚本挂载至任务容器的 `/usr/local/sbin/hf-scripts/post_system_init/` 目录下，
-以使其在任务容器的初始化阶段运行。关于此目录的更多信息，可以参考 `/marsv2/entrypoints` 中的任务初始化脚本。

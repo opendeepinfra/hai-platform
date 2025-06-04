@@ -12,10 +12,6 @@ echo "source /marsv2/scripts/init/haiprof_envs.values" >> /etc/bash.bashrc
 
 source /marsv2/entrypoints/system_scope.sh
 
-# 记录当前的运行任务
-LAST_TASK_DIR=/marsv2/last_task/${MARSV2_TASK_TYPE}
-mkdir -p ${LAST_TASK_DIR}
-cp /marsv2/scripts/init/task.json ${LAST_TASK_DIR}
 
 if [[ ${MARSV2_ASSIGNED_NUMA} == '0' || ${MARSV2_ASSIGNED_NUMA} == '1' ]]; then
 user_cmd=$(cat <<EOF

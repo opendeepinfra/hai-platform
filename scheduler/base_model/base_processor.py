@@ -40,9 +40,8 @@ class BaseProcessor(object):
     resource_df: pd.DataFrame = TickDataDescriptor()
     task_df: pd.DataFrame = TickDataDescriptor()
     user_df: pd.DataFrame = TickDataDescriptor()
-    metrics: dict = TickDataDescriptor()
 
-    def __init__(self, *, name: str, conn: ProcessConnection, global_config_conn: ProcessConnection):
+    def __init__(self, *, name: str, conn: ProcessConnection, global_config_conn: ProcessConnection, metric_conn: ProcessConnection):
         self.name = name
         self.upstreams: Dict[str, ProcessConnection] = {}
         self.__conn = conn
@@ -53,9 +52,11 @@ class BaseProcessor(object):
         self.global_config = {}
         self.__registered_global_config = {}
         self.__global_config_conn = global_config_conn
+        # 上报 metrics 用的
+        self.__metric_conn = metric_conn
+        self.__metrics = {}
         self.__last_perf_counter = -1
         self.__last_perf_counter_list = defaultdict(list)
-        self.__last_write_result = -1
 
     def _log(self, log_func, *args, **kwargs):
         with logger.contextualize(uuid=f'{self.name}#{self.seq}'):
@@ -100,14 +101,12 @@ class BaseProcessor(object):
                 upstream_data = self.upstreams[upstream].get()
                 self.__upstream_seqs[upstream] = upstream_data.seq
                 return upstream_data
-            time.sleep(0.001)
 
     def set_tick_data(self, tick_data=None):
         """
         把自己的 tick_data 设置成传入的 tick_data
         """
         self.tick_data = TickData() if tick_data is None else tick_data
-        self.metrics = {}  # 这里有上游的 metrics
 
     def start(self):
         while True:
@@ -138,7 +137,7 @@ class BaseProcessor(object):
         """
         提供了一个上报 metric 的接口，由 monitor 来集中处理
         """
-        self.metrics[name] = value
+        self.__metrics[name] = value
         self.debug(f'update metric {name} {value}')
 
     def __write_result(self):
@@ -146,11 +145,10 @@ class BaseProcessor(object):
         写入数据
         """
         self.tick_data.extra_data['registered_global_config'] = self.__registered_global_config
-        if self.__last_write_result > 0:
-            self.update_metric('write_result', self.__last_write_result)
         self.perf_counter()
         self.__conn.put(self.tick_data, seq=self.seq)
-        self.__last_write_result = self.perf_counter()
+        self.update_metric('write_result', self.perf_counter())
+        self.__metric_conn.put(self.__metrics)
 
     def __load_global_config(self):
         """

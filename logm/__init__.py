@@ -5,7 +5,7 @@ from functools import wraps, partial
 from loguru import logger
 from loguru._logger import context as log_context
 
-import fetion
+from fetion import Fetion
 from conf.flags import TASK_PRIORITY
 
 logger_format = (
@@ -56,7 +56,7 @@ def fetion_log(f):
                 uuid_var += ' | '
             task = kwargs.pop('task', None)
             task_info = '' if task is None else f'[{task.user_name}][{task.nb_name}][{task.id}][{TASK_PRIORITY.value_key_map().get(task.priority, "AUTO")}] | '
-            rst = fetion.Fetion.alert(f'{uuid_var}{task_info}{args[0]}', task=task, **kwargs)
+            rst = Fetion.alert(f'{uuid_var}{task_info}{args[0]}', task=task, **kwargs)
             if rst is not None:
                 logger.info(rst)
         f(*args, **kwargs)

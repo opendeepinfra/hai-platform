@@ -27,7 +27,6 @@ with logger.contextualize(uuid=f'{log_id}.init'):
     set_mass_info(key_list=[generate_key(class_name=TrainingTask.__name__, sign='id', value=task_id)], mass_name=f'{task_id}_{module}')
     register_parliament()
     task = TrainingTaskSelector.find_one_by_id(AutoTaskSchemaImpl, id=task_id)
-    k8s_namespace = task.user.config.task_namespace
     bind_logger_task(task)
     register_archive(task, sign='id')
     custom_k8s_api = get_custom_corev1_api()
@@ -38,7 +37,7 @@ def check_unschedulable():
     try:
         logger.info('检查是否unschedulable')
         try:
-            k8s_pods = custom_k8s_api.list_namespaced_pod_with_retry(namespace=k8s_namespace,
+            k8s_pods = custom_k8s_api.list_namespaced_pod_with_retry(namespace=CONF.launcher.task_namespace,
                                                           label_selector='task_id={}'.format(task_id),
                                                           resource_version='0')
         except Exception as e:
@@ -64,7 +63,7 @@ def check_unschedulable():
                 redis_conn.append(f'lifecycle:{task_id}:failed_msg', f'{alert_msg}\n')
                 for pod in blocked_pods:
                     task.update_pod_status(rank=int(pod.job_id), status=EXP_STATUS.FAILED)
-                logger.f_error(f'检查失败，有处于 UNSCHEDULABLE 的节点 ({[p.node for p in blocked_pods]})，将重启训练')
+                logger.f_error(f'检查失败，有处于 UNSCHEDULABLE 的节点，将重启训练')
                 redis_conn.lpush(f'{CONF.manager.stop_channel}:{task.id}', json.dumps({'action': 'stop', 'flag': STOP_CODE.UNSCHEDULABLE}))
             except Exception as e:
                 logger.exception(e)

@@ -3,7 +3,6 @@ import functools
 import multiprocessing
 import os
 import pathlib
-import time
 
 from conf import CONF
 from logm import logger
@@ -35,13 +34,8 @@ def log_info(log_str):
     log_with_process_name('INFO', log_str)
 
 
-last_fetion_time = dict()
-
-def log_error(log_str, exception=None, fetion_interval=None):
+def log_error(log_str, exception=None):
     log_with_process_name('ERROR', log_str)
-    if isinstance(fetion_interval, int) and time.time() - last_fetion_time.get(log_str, 0) > fetion_interval:
-        last_fetion_time[log_str] = time.time()
-        logger.f_error(log_str)
     if exception is not None:
         logger.exception(exception)
 

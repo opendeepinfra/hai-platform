@@ -13,7 +13,7 @@ from k8s_watcher.node_watcher import NODES_DF_COLUMNS
 k8s_corev1_api = get_corev1_api()
 
 
-async def async_get_nodes_df(monitor=False):
+async def async_get_nodes_df(monitor=True):
     nodes_df_pickle = await a_redis.get('nodes_df_pickle')
     nodes_df = pd.DataFrame(columns=NODES_DF_COLUMNS) if nodes_df_pickle is None else pickle.loads(nodes_df_pickle)
     if len(nodes_df) == 0:

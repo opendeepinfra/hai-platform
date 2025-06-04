@@ -1,5 +1,5 @@
 # syntax = docker/dockerfile:1
-FROM ubuntu:20.04 as base
+FROM nvcr.io/nvidia/cuda:11.3.0-devel-ubuntu20.04 as base
 
 ARG HAI_VERSION
 
@@ -8,8 +8,8 @@ RUN --mount=type=cache,sharing=private,target=/var/cache/apt \
   apt-get update && DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai apt-get -y install tzdata && \
   apt-get install -y python3.8 python3-pip tzdata libcurl4-openssl-dev libssl-dev net-tools \
     apache2-utils infiniband-diags g++ libpq-dev python3-dev openssh-server sudo curl python-numpy \
-    gcc automake autoconf libtool make gdb strace moreutils dnsutils pv rsync vim less git libgomp1 lsb-release jq \
-    libcap-dev libcap2-bin libnuma-dev numactl libopenmpi-dev \
+    gcc automake autoconf libtool make libcap-dev libcap2-bin gdb strace moreutils dnsutils pv rsync vim less git libgomp1 lsb-release jq \
+    libopenmpi-dev libnuma-dev numactl \
     haproxy redis postgresql attr
 
 RUN ln -sf /usr/bin/python3.8 /usr/bin/python
@@ -51,9 +51,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
   --trusted-host=pypi.tuna.tsinghua.edu.cn
 
 # 安装 studio
-RUN pip install jupyterlab_hai_platform_ext && \
-  mkdir -p /marsv2/scripts/studio && \
-  curl https://github.com/HFAiLab/hai-platform-studio/releases/download/v0.19.0-alpha.1682329905.32209c5e/hai-studio-linux-x64-0.19.0-alpha.1682329905.32209c5e.tar.gz | tar zxvf - -C /marsv2/scripts/studio
+RUN mkdir -p /marsv2/scripts/studio && \
+  curl https://yinghuoai-public.oss-cn-hangzhou.aliyuncs.com/build_deps/hai-studio-linux-x64-0.0.2.tar.gz | tar zxvf - -C /marsv2/scripts/studio
 
 ############################################################
 
@@ -77,3 +76,7 @@ RUN --mount=type=bind,from=packaging,source=/tmp,target=/tmp \
   pip install /tmp/hai*.whl --index-url=https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host=pypi.tuna.tsinghua.edu.cn
 
 COPY --from=packaging /high-flyer/code/multi_gpu_runner_server /tmp/hai*.whl /high-flyer/code/multi_gpu_runner_server
+#### create haienv 202207 ####
+RUN ["/bin/bash", "-c", "export HAIENV_PATH=/hf_shared/hfai_envs/platform &&     mkdir -p /hf_shared/hfai_envs/platform && chmod 777 /hf_shared/hfai_envs &&     echo Y | haienv create hai202207 --no_extend"]
+
+RUN --mount=type=cache,sharing=private,target=/root/.cache/pip --mount=type=bind,source=one/requirements-202207.txt,target=/tmp/requirements-202207.txt     ["/bin/bash", "-c", "export HAIENV_PATH=/hf_shared/hfai_envs/platform &&     source haienv hai202207 &&     pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple &&     pip config set install.trusted-host pypi.tuna.tsinghua.edu.cn &&     pip config set wheel.trusted-host pypi.tuna.tsinghua.edu.cn &&     echo unset pip cache ttl &&     sed -i '/def _cache_set(self, cache_url, request, response, body=None, expires_time=None):/a\\        expires_time=None' `python -c 'import pip._vendor.cachecontrol.controller as cc; print(cc.__file__)'` &&     pip install -r /tmp/requirements-202207.txt --no-warn-conflicts --no-deps"]

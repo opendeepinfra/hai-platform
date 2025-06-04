@@ -1,5 +1,4 @@
 
-from typing import Dict
 
 from api.task_schema import TaskSchema
 from base_model.base_task import BaseTask
@@ -31,12 +30,5 @@ async def create_task_base_queue(*args, **kwargs):
     }
 
 
-async def check_sidecar_get_err(task_schema: TaskSchema, task: BaseTask):
-    return None
-
-
-async def process_create_task(task_schema: TaskSchema, task: BaseTask) -> Dict:
-    return {
-        'success': 1,
-        'task': task
-    }
+async def process_create_task(task_schema: TaskSchema, task: BaseTask) -> BaseTask:
+    return task

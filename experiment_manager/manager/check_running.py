@@ -31,7 +31,6 @@ with logger.contextualize(uuid=f'{log_id}.init'):
     set_mass_info(key_list=[generate_key(class_name=TrainingTask.__name__, sign='id', value=task_id)], mass_name=f'{task_id}_{module}')
     register_parliament()
     task = TrainingTaskSelector.find_one_by_id(AutoTaskSchemaImpl, id=task_id)
-    k8s_namespace = task.user.config.task_namespace
     bind_logger_task(task)
     register_archive(task, sign='id')
     total_num = len(task.assigned_nodes)
@@ -49,19 +48,10 @@ with logger.contextualize(uuid=f'{log_id}.create_zmq'):
     try:
         context = zmq.Context()
         socket = context.socket(zmq.REQ)
-        socket.connect(f"tcp://{task.user_name.replace('_', '-')}-{task_id}-0:5779")
+        socket.connect(f"tcp://{task.user_name}-{task_id}-0:5779")
     except Exception as e:
         logger.exception(e)
         logger.f_error('creating suspend zmq error!')
-
-
-def get_terminated_critical_sidecars(pod_state):
-    terminated_sidecars = [
-        (c, c_info['state']['terminated']['exitCode'])
-        for c, c_info in pod_state['details']['container_statuses'].items() if
-        c.endswith('-critical') and c_info['state'].get('terminated') is not None
-    ]
-    return terminated_sidecars
 
 
 @log_stage(log_id)
@@ -72,20 +62,16 @@ def check_pod_disappeared(finished_pod_ids):
     """
     is_failed_or_stopped = False
     pod_ids = {f'{task.user_name.replace("_", "-")}-{task_id}-{i}' for i in range(total_num)}
-    k8s_pods = custom_k8s_api.list_namespaced_pod_with_retry(namespace=k8s_namespace,
+    k8s_pods = custom_k8s_api.list_namespaced_pod_with_retry(namespace=CONF.launcher.task_namespace,
                                                              label_selector=f'task_id={task_id},type!=manager',
                                                              resource_version='0')
     resource_version = k8s_pods['metadata']['resourceVersion']
     watched_pod_ids = set()
     for k8s_pod in k8s_pods['items']:
         pod_state = get_pod_state(pod_dict=k8s_pod, container_names=[CONTAINER_NAME])
-        terminated_sidecars = get_terminated_critical_sidecars(pod_state)
         job_status = pod_state['status']
         pod_id = pod_state['details']['pod_name']
         watched_pod_ids.add(pod_id)
-        if len(terminated_sidecars):
-            logger.info(f'查询到pod_id为{pod_id}的 terminated_sidecars: {terminated_sidecars}，将任务标记为失败')
-            job_status = EXP_STATUS.FAILED
         # 这边会刷数据库
         logger.info(f'查询到pod_id为{pod_id}的节点状态为{job_status}')
         task.update_pod_status(rank=int(pod_id.split('-')[-1]), status=job_status)
@@ -158,7 +144,7 @@ with logger.contextualize(uuid=f'{log_id}.monitor_loop'):
             }
             logger.info(f'开始watch状态变化，params: {params}')
             for event in w.stream(k8s_api.list_namespaced_pod,
-                                  namespace=k8s_namespace,
+                                  namespace=CONF.launcher.task_namespace,
                                   label_selector=f'task_id={task_id},type!=manager',
                                   **params):
                 event_object = event['object']
@@ -167,11 +153,7 @@ with logger.contextualize(uuid=f'{log_id}.monitor_loop'):
                 status = pod_state['status']
                 message = pod_state['message']
                 pod_id = pod_state['details']['pod_name']
-                terminated_sidecars = get_terminated_critical_sidecars(pod_state)
-                if len(terminated_sidecars) > 0:
-                    status = EXP_STATUS.FAILED
-                    logger.info(f'查询到pod_id为{pod_id}的 terminated_sidecars: {terminated_sidecars}，将任务标记为失败')
-                logger.info(f'new event ---- status: {status}; pod_id: {pod_id}; message: {message}; terminated_sidecars: {terminated_sidecars}')  # 检测到状态
+                logger.info(f'new event ---- status: {status}; pod_id: {pod_id}; message: {message}')  # 检测到状态
                 task.update_pod_status(rank=int(pod_id.split('-')[-1]), status=status)
                 if status in EXP_STATUS.FINISHED:
                     # 防止多次运行，因为 pod 在进入终态的时候还是会多次调用

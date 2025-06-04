@@ -13,7 +13,7 @@ touch ${MARSV2_DEBUG_LOG_FILE_PATH}
 
 # validate custom image
 set -o pipefail
-/bin/bash /marsv2/scripts/validate_image.sh 2>&1 | ts '[%Y-%m-%d %H:%M:%.S]' >> ${MARSV2_LOG_FILE_PATH}
+/bin/bash /marsv2/scripts/validate_image.sh 2>&1 | ts '[%Y-%m-%d %H:%M:%.S]' > ${MARSV2_LOG_FILE_PATH}
 set +o pipefail
 
 # start hfai scheduler

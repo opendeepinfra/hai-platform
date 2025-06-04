@@ -101,8 +101,7 @@ class DbOperationImpl(ITaskImpl, ABC):
         self.update_user_last_activity()
 
     def update_user_last_activity(self):
-        from_shared_task = any(tag.startswith('_shared_in') for tag in self.task.tags)
-        update_user_last_activity(self.task.user_name, from_shared_task=from_shared_task)
+        update_user_last_activity(self.task.user_name)
 
     def resume(self, *args, **kwargs) -> Optional[BaseTask]:
         task = self.task
@@ -139,25 +138,3 @@ class DbOperationImpl(ITaskImpl, ABC):
         except Exception as exp:
             print(exp, flush=True)
             raise exp
-
-    def set_restart_log(self, rule, reason, result, *args, **kwargs):
-        try:
-            MarsDB().execute("""
-            insert into "task_restart_log" ("task_id", "rule", "reason", "result")
-            values (%s, %s, %s, %s)
-            """, (self.task.id, rule, reason, result))
-        except Exception as e:
-            if "already exists" in str(e):
-                return {
-                    'success': 0,
-                    'msg': f'已经设置了 {rule} 的 restart_log'
-                }
-            else:
-                return {
-                    'success': 0,
-                    'msg': '设置 restart_log 失败'
-                }
-        return {
-                    'success': 1,
-                    'msg': '设置 restart_log 成功'
-                }

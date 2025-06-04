@@ -48,7 +48,6 @@ class User(UserExtras, BaseUser):
     access: UserAccess = ServerUserModule()
     monitor: UserMonitor = ServerUserModule()
     image: UserImage = ServerUserModule()
-    artifact: UserArtifact = ServerUserModule()
 
     # 仅后端使用的业务组件
     config: UserConfig = ServerUserModule()
@@ -93,16 +92,8 @@ class User(UserExtras, BaseUser):
         return self.role == USER_ROLE.INTERNAL
 
     @property
-    def is_external(self):
-        return self.role == USER_ROLE.EXTERNAL
-
-    @property
     def uid(self):
         return self.user_id
-
-    @cached_property
-    def shared_task_tag(self):
-        return f'_shared_in_{self.shared_group}'
 
     @cached_property
     def db_str_group_list(self) -> str:

@@ -517,7 +517,7 @@ TC-L01, L02, L04, E2E-01, E2E-02, E2E-05, E2E-06
 | --- | --- |
 | 代码分支 | `feature/hai-cli-workspace-server-design`（HEAD 见 `git log`；本文档记录时已含全部修复） |
 | 103 仓库 | `fireflyer@192.168.100.103:~/hai-platform`（与本地同步） |
-| 运行镜像 | `registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:2ad75bf`（**E2E 实测所用镜像**） |
+| 运行镜像 | `registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:e03c42c`（当前部署；含 §8.3 全部 6 项修复，冒烟 8/8 + E2E 19/19 实测通过） |
 | 部署方式 | 镜像 `docker save` → `multipass transfer` → `microk8s.ctr images import` → StatefulSet `imagePullPolicy=IfNotPresent`（**本环境 registry push 无凭据**，故不走 registry） |
 | 对象存储 | RustFS（S3 兼容）容器 `rustfs`，端点 `http://192.168.100.103:19000`，bucket `hai-platform-private` / `hai-platform-public` |
 | 服务端配置 | `/nfs-shared/hai-platform/override.toml` 的 `[cloud.storage]` / `[cloud.storage.service]`（`provider='s3'`、`workspace_path='/nfs-shared/hai-platform/workspace'`） |
@@ -528,7 +528,7 @@ TC-L01, L02, L04, E2E-01, E2E-02, E2E-05, E2E-06
 | 验证 | 结果 | 说明 |
 | --- | --- | --- |
 | `/ugc/*` 接口冒烟（附录 B 脚本） | **8/8 PASS** | 含枚举串 + `text/plain` + `{"file_list":{...}}` 兼容形态 |
-| 7 个子命令 E2E | **19/19 PASS** | `init` / `push`（集群侧 md5 一致）/ `diff` / `list` / `pull` / `download` / `remove -f` / `remove` |
+| 7 个子命令 E2E | **19/19 PASS** | 在 `2ad75bf` 与 `e03c42c` 两个镜像上各跑通一次 | `init` / `push`（集群侧 md5 一致）/ `diff` / `list` / `pull` / `download` / `remove -f` / `remove` |
 | 任务侧 `oss://` 解析 | 通过 | 提交接口把 `s3://hfai/haiadmin/workspaces/demo` 正确解析为集群路径并写入 `code_file`/`workspace` |
 | 提交期存在性校验 | 通过 | 未 push 时返回「workspace 尚未同步到集群，请先执行 hai-cli workspace push」，**不产生「已创建但立即失败」** |
 

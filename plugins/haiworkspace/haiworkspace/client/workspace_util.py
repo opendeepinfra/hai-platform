@@ -19,6 +19,19 @@ from .utils import FileType, SyncDirection, SyncStatus, FileInfo, FileList, File
     get_file_info, list_local_files_inner, hashkey, zip_dir, tz_utc_8
 # cloud_storage/provider
 from .provider import OSSApi, MockApi
+try:
+    # s3.py 由 install.sh 从 cloud_storage/provider/ 一起打包进来；
+    # 兼容更早的客户端产物（那时还没有这个模块）
+    from .provider import S3Api
+except Exception:  # pragma: no cover
+    S3Api = None
+
+# provider 名称 -> 实现类（None 会退回 MockApi）
+CLOUD_API_REGISTRY = {
+    'oss': OSSApi,
+    's3': S3Api,
+    'rustfs': S3Api,
+}
 
 from itertools import chain
 
@@ -293,11 +306,13 @@ async def get_cloud_api(provider, name, file_type, token_expires, connect_timeou
         'proxies': {'http': proxy, 'https': proxy} if proxy else None,
         'connect_timeout': connect_timeout,
     }
-    if provider == 'oss':
-        cloud_api = OSSApi(**kwargs)
-    else:
-        print_bold('Using mock cloud api, please check your provider config!')
-        cloud_api = MockApi(**kwargs)
+    # provider 映射表：从「写死的 if provider == 'oss'」改为查表，
+    # 这样新增 provider（s3=自建 RustFS/MinIO、localfs=本地目录）不需要再改客户端逻辑。
+    cloud_cls = CLOUD_API_REGISTRY.get(provider)
+    if cloud_cls is None:
+        print_bold(f'未知的 provider: {provider}, 请检查配置；将使用 mock cloud api')
+        cloud_cls = MockApi
+    cloud_api = cloud_cls(**kwargs)
     return cloud_api, auth_token['bucket']
 
 

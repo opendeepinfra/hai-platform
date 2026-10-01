@@ -8,6 +8,7 @@ from ..user_quota import UserQuota
 from ..user_storage import UserStorage
 from ..user_message import UserMessage
 from ..aio_user_db import AioUserDb
+from ..user_downloaded_files import UserDownloadedFiles
 from ..user_checkpoint import UserCheckpoint
 from ..user_environment import UserEnvironment
 from ..user_access import UserAccess

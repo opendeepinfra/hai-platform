@@ -37,6 +37,11 @@
 
 ## 2. 测试环境与数据准备
 
+> **本章描述的是供用例假设的最小环境**（单机 `localfs` / 真实 OSS 两条路径）。
+> 192.168.100.103 上另有一套**已部署并通过冒烟的真实测试环境**（Multipass VM + MicroK8s + MetalLB + LoadBalancer VIP），
+> 其拓扑、节点规格、访问地址与凭据、Terraform 部署流程、故障恢复 Runbook 见
+> [test-environment.md](test-environment.md)。在真实环境上执行用例时，请以该文档的地址与凭据为准。
+
 ### 2.1 环境拓扑（路径 1：`provider=localfs`，必跑）
 
 | 组件 | 部署 | 关键配置 |

@@ -30,20 +30,35 @@ from .provider import OSSApi, MockApi
 # 集群内访问外网的proxy
 try:
     proxies = { 'http': CONF.cloud.storage.service.proxy_endpoint, 'https': CONF.cloud.storage.service.proxy_endpoint }
-except:
+except Exception:
     proxies = None
 
-PROVIDER = CONF.cloud.storage.provider
-if PROVIDER == 'oss':
-    cloud_api = OSSApi(CONF.cloud.storage.endpoint,
-                       CONF.cloud.storage.access_key_id,
-                       CONF.cloud.storage.access_key_secret,
-                       uid=CONF.cloud.storage.uid,
-                       role_arn=CONF.cloud.storage.role_arn,
-                       breakpoint_info_path=CONF.cloud.storage.service.breakpoint_info_path,
-                       proxies=proxies)
-else:
-    cloud_api = MockApi()
+# 注意：以下必须保持「导入期无副作用」（设计 ADR-11/ADR-12）。
+# 在没有 [cloud.storage] 配置的宿主（例如 ugc-server）上，import cloud_storage.utils
+# 不允许失败，也不允许在此处注册路由 / on_event。
+PROVIDER = CONF.try_get('cloud.storage.provider', default='oss')
+
+
+class _LazyCloudApi:
+    '''
+    惰性构造 provider，对外保持 `cloud_api.xxx(...)` 的既有调用方式不变。
+    第一次真正使用（属性访问）时才读取配置并实例化，避免导入期副作用。
+    '''
+
+    def __init__(self):
+        self._impl = None
+
+    def _build(self):
+        if self._impl is None:
+            from cloud_storage.service.context import build_cloud_api
+            self._impl = build_cloud_api()
+        return self._impl
+
+    def __getattr__(self, item):
+        return getattr(self._build(), item)
+
+
+cloud_api = _LazyCloudApi()
 
 
 class WorkerPools:
@@ -178,6 +193,24 @@ class StatusRecorder:
         members = await self.aio_recorder.hkeys(name)
         ret = [m.decode() for m in members]
         return ret
+
+    @metrics_wrapper
+    async def a_get_hall(self, name):
+        '''
+        获取hash中的所有key/value（保持字符串，不做 int 转换）
+        '''
+        members = await self.aio_recorder.hgetall(name)
+        ret = {k.decode(): v.decode() for k, v in members.items()}
+        return ret
+
+    @metrics_wrapper
+    async def a_set_nx(self, key, value, expires=604800):
+        '''
+        SET NX：只有 key 不存在时才写入，返回是否写入成功。
+        用于多 worker 之间的互斥锁（设计 ADR-5）。
+        '''
+        ret = await self.aio_recorder.set(key, value, ex=expires, nx=True)
+        return bool(ret)
 
     @metrics_wrapper
     async def a_hset(self, name, key, value):

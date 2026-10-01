@@ -54,6 +54,7 @@ class User(UserExtras, BaseUser):
     config: UserConfig = ServerUserModule()
     db: UserDb = ServerUserModule()
     aio_db: AioUserDb = ServerUserModule()
+    downloaded_files: UserDownloadedFiles = ServerUserModule()
     checkpoint: UserCheckpoint = ServerUserModule()
     environment: UserEnvironment = ServerUserModule()
     message: UserMessage = ServerUserModule()

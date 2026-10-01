@@ -101,11 +101,14 @@ async def submit_from_cluster(user, name: str, file_type: FileType, file_infos,
                 check_is_subpath(cluster_base_path, src_file)
             except ClientException as ce:
                 raise WorkspaceError(ErrorCode.PATH_ESCAPE, str(ce))
-            # 符号链接指向工作区之外的必须拒绝（SEC-03）
-            real_src = os.path.realpath(src_file)
-            if os.path.exists(src_file) and not os.path.realpath(cluster_base_path) == real_src \
-                    and os.path.realpath(cluster_base_path) not in os.path.dirname(real_src):
-                raise WorkspaceError(ErrorCode.PATH_ESCAPE, f'符号链接指向工作区之外: {path}')
+            # 符号链接指向工作区之外的必须拒绝（SEC-03）：
+            # 用 realpath 之后再走一次 check_is_subpath，防止软链把文件指到工作区外
+            if os.path.exists(src_file):
+                real_src = os.path.realpath(src_file)
+                try:
+                    check_is_subpath(os.path.realpath(cluster_base_path), real_src)
+                except ClientException:
+                    raise WorkspaceError(ErrorCode.PATH_ESCAPE, f'符号链接指向工作区之外: {path}')
 
             if fi.md5 is None or fi.size is None or fi.last_modified is None:
                 files = await async_list_local_files_inner(cluster_base_path, path, False, True)
@@ -179,7 +182,8 @@ async def submit_from_cluster(user, name: str, file_type: FileType, file_infos,
                             part_size=slice_bytes,
                             num_threads=4,
                             index=index,
-                            user=user,
+                            user_name=user.user_name,
+                            user_role=user.role,
                             file_type=file_type,
                             file_info=upload_file_infos[i],
                             filtered=filtered,

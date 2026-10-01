@@ -21,6 +21,7 @@ from server_model.user import User
 from utils import convert_to_external_task
 from logm import logger
 from api.task_schema import TaskSchema, TaskService
+from server_model.task_impl.workspace_resolver import resolve_workspace_path, TaskSchemaError
 
 
 if TYPE_CHECKING:
@@ -241,6 +242,14 @@ async def create_task_base_queue_v2(user: User, task_schema: TaskSchema = None, 
         config_json['git_remote_repo'] = task_schema.spec.git_remote_repo
     elif task_schema.spec.workspace is None:
         return fatal_response('不指定 git repo 时, 必须指定 workspace')
+    # -- 云存储工作区（oss://<group>/<user>/workspaces/<name>）在提交阶段就解析成集群真实路径，
+    #    并校验目录已存在，避免出现「任务已创建、但 create_node 时立刻失败」（FR-15 / TC-K06）。
+    #    非 URI 的普通路径会被原样返回，行为不变（回归保护 K-05）。
+    try:
+        task_schema.spec.workspace = resolve_workspace_path(
+            user, task_schema.spec.workspace, check_exists=True)
+    except TaskSchemaError as e:
+        return fatal_response(str(e))
     # 组装成数据库需要的 code file
     code_file = os.path.join(task_schema.spec.workspace, task_schema.spec.entrypoint) + ' ' + task_schema.spec.parameters
     if len(code_file) > 2047:

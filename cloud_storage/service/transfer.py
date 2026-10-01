@@ -7,6 +7,10 @@
 注意：本模块的函数会通过 `pool.submit(...)` 提交到 **spawn** 进程池，
 因此必须定义在模块顶层，且通过 `cloud_storage.utils.cloud_api`（惰性代理）
 在子进程内自行构造 provider —— 不要在父进程把 provider 实例传进来。
+
+同理，**不要把 User 对象传进进程池**（User 会持有 access/db 等组件，且其构造依赖
+k8s client 等重资源，pickle 不可靠）。记账只传 user_name / user_role 两个字符串，
+SQL 在本模块内直接执行。
 '''
 
 import os
@@ -21,6 +25,46 @@ from cloud_storage.metrics import (RUNNING_TASKS_GAUGE, Failed_TASKS_COUNTER,
                                    SYNCING_FILESIZE_GAUGE)
 from cloud_storage.utils import cloud_api, status_recorder, status_key, record_metrics
 from conf.utils import FileType, SyncStatus, tz_utc_8, unzip_dir
+from db import MarsDB
+
+
+# ---------------------------------------------------------------- 记账（子进程序内执行）
+# 与 server_model/user_impl/user_db 的同步版 SQL 保持一致；这里用 user_name/user_role
+# 两个字符串作为参数，避免把 User 对象 pickle 进进程池。
+
+_INSERT_DOWNLOADED_FILE_SQL = '''
+    insert into "user_downloaded_files" (
+        "user_name", "user_role", "file_type", "file_path",
+        "file_size", "file_mtime", "file_md5", "status"
+    )
+    values (%s, %s, CAST(%s AS file_type), %s, %s, %s, %s, CAST(%s AS sync_status))
+    on conflict ("file_path", "file_md5") do update set
+        "status" = excluded."status",
+        "file_size" = excluded."file_size",
+        "file_mtime" = excluded."file_mtime"
+'''
+
+_UPDATE_DOWNLOADED_FILE_STATUS_SQL = '''
+    update "user_downloaded_files"
+    set "status" = CAST(%s AS sync_status)
+    where "file_path" = %s
+      and "file_md5" = %s
+'''
+
+
+def _db_insert_downloaded_file(user_name, user_role, file_type, file_path,
+                               file_size, file_mtime, file_md5, status):
+    params = (user_name, user_role, file_type.value if hasattr(file_type, 'value') else file_type,
+              (file_path or '')[:2047], file_size, str(file_mtime or '')[:255],
+              str(file_md5 or '')[:255], status.value if hasattr(status, 'value') else status)
+    MarsDB().execute(_INSERT_DOWNLOADED_FILE_SQL, params)
+
+
+def _db_update_downloaded_file_status(file_path, file_md5, status):
+    params = (status.value if hasattr(status, 'value') else status,
+              (file_path or '')[:2047], str(file_md5 or '')[:255])
+    MarsDB().execute(_UPDATE_DOWNLOADED_FILE_STATUS_SQL, params)
+
 
 
 def resumable_download_with_retry(bucket_name,
@@ -116,7 +160,8 @@ def resumable_upload_with_retry(bucket_name,
                                 part_size=None,
                                 num_threads=None,
                                 index=None,
-                                user=None,
+                                user_name=None,
+                                user_role=None,
                                 file_type=None,
                                 file_info=None,
                                 filtered=False,
@@ -139,15 +184,15 @@ def resumable_upload_with_retry(bucket_name,
                         logger.info(f'  {filename} 之前已上传, md5: {md5}, 跳过')
                         status_recorder.hset(status_key(index, 'progress', True), key, file_info.size)
                         return {'key': key, 'size': file_info.size,
-                                'username': user.user_name, 'file_type': file_type}
+                                'username': user_name, 'file_type': file_type}
                 except Exception:
                     pass
 
             if not upload_succeed:
                 with record_metrics('insert_downloaded_file'):
-                    user.db.insert_downloaded_file(file_type, filename, file_info.size,
-                                                   file_info.last_modified, file_info.md5,
-                                                   SyncStatus.RUNNING)
+                    _db_insert_downloaded_file(user_name, user_role, file_type, filename,
+                                               file_info.size, file_info.last_modified,
+                                               file_info.md5, SyncStatus.RUNNING)
                 src_file_mode = oct(stat.S_IMODE(os.lstat(filename).st_mode))
                 tagging = f'size={file_info.size}&md5={file_info.md5}&source=cluster&filemode={src_file_mode}'
                 logger.info(f'开始上传 {key}')
@@ -156,15 +201,15 @@ def resumable_upload_with_retry(bucket_name,
                 logger.info(f'上传 {key} 完成')
                 upload_succeed = True
             with record_metrics('update_downloaded_file_status'):
-                user.db.update_downloaded_file_status(filename, file_info.md5, SyncStatus.FINISHED)
+                _db_update_downloaded_file_status(filename, file_info.md5, SyncStatus.FINISHED)
             return {'key': key, 'size': file_info.size,
-                    'username': user.user_name, 'file_type': file_type}
+                    'username': user_name, 'file_type': file_type}
         except Exception as e:
             if i == retries:
                 logger.info(f'上传 {filename} 失败')
                 with record_metrics('update_downloaded_file_status'):
-                    user.db.update_downloaded_file_status(filename, file_info.md5, SyncStatus.FAILED)
-                raise Exception({'key': key, 'size': file_info.size, 'username': user.user_name,
+                    _db_update_downloaded_file_status(filename, file_info.md5, SyncStatus.FAILED)
+                raise Exception({'key': key, 'size': file_info.size, 'username': user_name,
                                  'file_type': file_type, 'msg': str(e)})
             logger.info(f'第{i}次上传{key}失败: {str(e)}, 尝试重试...')
             time.sleep(1)

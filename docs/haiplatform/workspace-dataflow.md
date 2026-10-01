@@ -6,7 +6,47 @@
 
 ---
 
-## 0. 三个存储位置（先建立坐标）
+## 0. 一页简图（只想看个大概就看这里）
+
+```
+        ┌─────────────────────── 数据面（大流量，不经过 ugc-server） ───────────────────────┐
+
+  本地工作区                 ① 客户端直传              ② 服务端下载 + 解压        集群共享盘
+  /tmp/wsdemo2   ───────────────────────────►  RustFS  ───────────────────────────►  /nfs-shared/…/demo2
+       ▲                                       (S3 bucket)                                 │
+       │                                            ▲                                       │ ③ 挂载
+       │        ④ 客户端直连下载                     ③ 服务端上传                             ▼
+       └────────────────────────────────────────────┘                                 任务 Pod
+                                                                              cd 工作区 / MARSV2_TASK_WORKSPACE
+        └────────────────────────────────────────────────────────────────────────────────┘
+
+        ┌────────────────────────── 控制面（小流量，只走 /ugc/*） ──────────────────────────┐
+
+     hai-cli  ──►  ugc-server  ──►  Redis（过程态：状态 / 进度 / 恢复锁）
+                                   PG  （长期态：list 用的状态 + pull 记账）
+
+     只做四件事：签发对象存储凭证 · 列目录算 diff · 触发/续跑搬运 · 报进度
+     （①②③④ 每一步之前，客户端都先问控制面拿凭证或触发搬运）
+        └────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**一句话版本**
+
+```
+push：本地 ──直传──► RustFS ──服务端搬运──► 共享盘 ──挂载──► 任务 Pod
+pull：本地 ◄─直连─── RustFS ◄─服务端搬运── 共享盘
+                    （凭证 / 触发 / 状态 = /ugc/* + Redis + PG）
+```
+
+**三个要点**
+
+1. **大文件不经过 ugc-server**：本地↔RustFS 是客户端直连；RustFS↔共享盘由服务端后台 worker 搬运。
+2. **默认 zip**：push 先往 bucket 放一个 `<本地目录名>.zip`，解压后的散文件只落在共享盘（所以「bucket 里没有 hello.sh」是正常的）。
+3. **任务怎么拿到代码**：提交时 `spec.workspace = s3://<group>/<user>/workspaces/<name>`，服务端解析成共享盘真实路径，再作为 hostPath 挂进 Pod。
+
+---
+
+## 1. 三个存储位置（先建立坐标）
 
 | 位置 | 实际路径 / 标识 | 谁读写 |
 | --- | --- | --- |
@@ -35,7 +75,7 @@
 
 ---
 
-## 1. push：本地 → RustFS → 集群共享盘
+## 2. push：本地 → RustFS → 集群共享盘
 
 ```mermaid
 sequenceDiagram
@@ -97,7 +137,7 @@ sequenceDiagram
 
 ---
 
-## 2. pull：集群共享盘 → RustFS → 本地
+## 3. pull：集群共享盘 → RustFS → 本地
 
 ```mermaid
 sequenceDiagram
@@ -151,7 +191,7 @@ sequenceDiagram
 
 ---
 
-## 3. 任务侧：`s3://` 工作区如何挂进 Pod
+## 4. 任务侧：`s3://` 工作区如何挂进 Pod
 
 ```mermaid
 flowchart LR
@@ -168,7 +208,7 @@ flowchart LR
 
 ---
 
-## 4. 关键机制（为什么这么设计）
+## 5. 关键机制（为什么这么设计）
 
 | 机制 | 说明 |
 | --- | --- |
@@ -184,7 +224,7 @@ flowchart LR
 
 ---
 
-## 5. 本环境实际取值速查
+## 6. 本环境实际取值速查
 
 | 项 | 值 |
 | --- | --- |
@@ -197,7 +237,7 @@ flowchart LR
 | 用户/组 | `haiadmin` / `hfai`（uid `10020`） |
 | 典型路径 | 本地 `/tmp/wsdemo2/hello.sh` →（zip）对象 `hfai/haiadmin/workspaces/demo2/wsdemo2.zip` → 集群 `/nfs-shared/hai-platform/workspace/hfai/haiadmin/workspaces/demo2/hello.sh`；`pull` 后对象才变为 `…/demo2/hello.sh`（`source=cluster`） |
 
-### 5.1 实测样例（2026-10-01，bucket `hai-platform-private`）
+### 6.1 实测样例（2026-10-01，bucket `hai-platform-private`）
 
 ```
 hfai/haiadmin/workspaces/demo2/wsdemo2.zip            409B   ← push（zip 模式，客户端直传）
@@ -225,7 +265,7 @@ hfai/haiadmin/workspaces/demo/ckpt/model.pt            16B   ← pull（服务�
 
 ---
 
-## 6. 复现
+## 7. 复现
 
 ```bash
 # 本地：初始化（provider 必须是 s3）→ 推送 → 看差异

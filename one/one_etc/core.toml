@@ -40,11 +40,17 @@ backend = 'redis'
 [launcher]
 api_server = 'http://127.0.0.1'
 manager_nodes = ["jd-a1006-dl","jd-a1007-dl","jd-a1008-dl","jd-a1101-dl"]
-image_pull_policy = 'Always'
+image_pull_policy = 'IfNotPresent'
 manager_image = 'registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:latest'
+# Namespaces the k8s watcher observes, keyed by user role. k8s_watcher.py uses:
+#     namespaces        = list(CONF.launcher.task_namespaces_by_role.values())
+#     default_namespace = CONF.launcher.task_namespaces_by_role['internal']
+# With the previous placeholder ('poly-hpp') the watcher observed a namespace
+# that does not exist in a standard deployment, so it registered no nodes at all
+# and leader election failed with `namespaces "poly-hpp" not found`.
 [launcher.task_namespaces_by_role]
-internal = 'poly-hpp'
-external = 'poly-hpp'
+internal = 'hai-platform'
+external = 'hai-platform'
 [launcher.manager_envs]
 # KEY = VALUE
 [launcher.manager_mounts]
@@ -61,7 +67,7 @@ suspend_waiting_seconds.final = 5
 suspend_waiting_seconds.recieved = 5
 unschedulable_timeout_Ms = 1
 not_stop_node_for_test = 0
-image_pull_policy = 'Always'
+image_pull_policy = 'IfNotPresent'
 
 [k8s]
 [[k8s.config]]

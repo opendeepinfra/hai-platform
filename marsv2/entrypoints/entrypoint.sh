@@ -17,16 +17,24 @@ LAST_TASK_DIR=/marsv2/last_task/${MARSV2_TASK_TYPE}
 mkdir -p ${LAST_TASK_DIR}
 cp /marsv2/scripts/init/task.json ${LAST_TASK_DIR}
 
+# NOTE: `ulimit -n 204800` must NOT be able to abort this chain. The container's
+# hard nofile limit is inherited from containerd (MicroK8s ships
+# `ulimit -n 65536` in /var/snap/microk8s/current/args/containerd-env), so on a
+# stock cluster the raise fails with
+#     bash: ulimit: open files: cannot modify limit: Operation not permitted
+# and with a bare `&&` the rest of the chain -- including user_scope.sh -- was
+# skipped entirely. The task then produced no output at all and exited 1, which
+# looked like a user-script bug rather than a runtime limit problem.
 if [[ ${MARSV2_ASSIGNED_NUMA} == '0' || ${MARSV2_ASSIGNED_NUMA} == '1' ]]; then
 user_cmd=$(cat <<EOF
-ulimit -n 204800 \
+ulimit -n 204800 2>/dev/null || true \
 && export PYTHONPATH=${PWD}:${PYTHONPATH} \
 && numactl -m ${MARSV2_ASSIGNED_NUMA} -N ${MARSV2_ASSIGNED_NUMA} bash /marsv2/entrypoints/user_scope.sh 2>&1
 EOF
 )
 else
 user_cmd=$(cat <<EOF
-ulimit -n 204800 \
+ulimit -n 204800 2>/dev/null || true \
 && export PYTHONPATH=${PWD}:${PYTHONPATH} \
 && bash /marsv2/entrypoints/user_scope.sh 2>&1
 EOF

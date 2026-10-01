@@ -26,6 +26,7 @@
                                    PG  （长期态：list 用的状态 + pull 记账）
 
      只做四件事：签发对象存储凭证 · 列目录算 diff · 触发/续跑搬运 · 报进度
+    （凭证 = RustFS 的 endpoint/AK/SK/bucket，存在服务端 override.toml，见 §5.1）
      （①②③④ 每一步之前，客户端都先问控制面拿凭证或触发搬运）
         └────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -221,6 +222,70 @@ flowchart LR
 | **多 worker 互斥** | ugc-server 有 2 个 uvicorn worker；崩溃恢复用「实例心跳 + pod 级 `SET NX` 锁」，只认领心跳已失效且快照过期的任务 |
 | **路径安全** | 所有落盘/上传路径过 `check_is_subpath` + `realpath`（拒 `..`、绝对路径、指向工作区外的软链）；身份只来自 token，请求里的 `username/group` 一律忽略 |
 | **列表缓存** | `cluster_files/list` 结果缓存 30s（Redis + 进程内 TTLCache）。所以 push 后立刻 pull 可能看到旧列表——等 30s 或换 subpath |
+
+### 5.1 凭证从哪来（客户端如何知道 RustFS 的地址与密钥）
+
+**客户端不存地址和密钥**：`workspace.yml` 里只有 `provider` 这个名字；每次 push/pull 现场用 mars token
+调 `POST /ugc/get_sts_token` 换一份凭证，用完即丢。
+
+```
+ ① 运维侧（唯一持有密钥的地方）
+    /nfs-shared/hai-platform/override.toml  [cloud.storage]
+      provider='s3'  endpoint=http://192.168.100.103:19000
+      access_key_id / access_key_secret      private_bucket='hai-platform-private'
+        │  conf/proj_conf/default.py:28   core → scheduler → extension → override（override 优先级最高）
+        │  conf/proj_conf/default.py:59   AK/SK 支持 RSA 密文，自动解密
+        ▼
+ ② 服务端进程
+    cloud_storage/service/context.py:140  build_cloud_api()  按 provider 名选实现
+                                          's3'/'rustfs' → S3Api（context.py:161）
+    cloud_storage/provider/s3.py:276      S3Api.get_access_token()
+        │  → {endpoint, access_key_id, access_key_secret, security_token, bucket, authorized_path}
+        ▼
+ ③ 接口  POST /ugc/get_sts_token  （api/register/implement.py:76）
+    api/resource/cloud_storage/default.py:40  鉴权（token→用户）
+    cloud_storage/service/sts.py:26           issue_sts_token()
+        · TTL 夹取 [900, 43200]（sts.py:18）
+        · 用 token 解析出的 (user, group) 推导前缀 get_base_path()
+        · bucket 由 get_bucket_name() 决定（workspace → private_bucket）
+    响应：{'success': 1, 's3': {...}}    ← 外层 key 就是配置里的 provider 名
+        ▼
+ ④ 客户端
+    workspace_util.py:121  发请求    workspace_util.py:132  provider 名不在响应里就报错
+    workspace_util.py:30   CLOUD_API_REGISTRY {'oss':OSSApi,'s3':S3Api,'rustfs':S3Api}
+    workspace_util.py:315  registry[provider](endpoint=…, access_key_id=…, …) → boto3 直连
+```
+
+**实测（2026-10-01）**
+
+```yaml
+# /tmp/wsdemo2/.hfai/workspace.yml —— 客户端唯一持久化的东西，只有 4 个键
+local: /tmp/wsdemo2
+provider: s3
+remote: hfai/haiadmin/workspaces/demo2
+workspace: demo2
+```
+
+```
+POST /ugc/get_sts_token?token=***&name=demo2&file_type=FileType.WORKSPACE&ttl_seconds=1800
+
+success = 1
+s3 = {access_key_id: haipfsadmin, access_key_secret: Haipfs…cret, security_token: '',
+      expiration: '', bucket: hai-pl…vate, endpoint: http:/…9000,
+      authorized_path: hfai/h…emo2}
+```
+
+**四个要点**
+
+1. **客户端零密钥落盘**：只有 `provider` 这个名字在本地；AK/SK 每次现场取、用完即丢。
+2. **`provider` 名是双端唯一的“暗号”**：`workspace init -p s3` 写进本地；服务端用它做响应 key、选 provider 实现。
+   名字对不上客户端会报 `get_sts_token returns non oss data: ...`——**`init` 默认是 `oss`，接 RustFS 必须显式 `-p s3`**。
+3. **换存储只改服务端**：改 `override.toml` 的 `[cloud.storage]` 后重启 pod 即可（override 优先级最高，无需重建镜像），客户端不用动。
+4. **⚠️ 安全现状（P0 降级）**：S3 兼容存储没有阿里云 STS AssumeRole，`S3Api.get_access_token` 直接下发
+   **静态 AK/SK**（`security_token` 为空），`authorized_path` 只是标注、**不构成权限约束** ——
+   即拿到 token 的用户能拿到 RustFS 根级凭证。仅适用于内网/测试环境；生产需改用 RustFS 的
+   `AssumeRole`（+inline policy）或 bucket 前缀级 policy。
+
 
 ---
 

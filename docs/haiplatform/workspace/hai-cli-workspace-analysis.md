@@ -5,7 +5,7 @@
 | 分析对象 | `hai-cli workspace`（`init` / `push` / `pull` / `download` / `diff` / `list` / `remove`） |
 | 代码基线 | `/Users/tongxiaojun/github/opendeepinfra/hai-platform`，`git HEAD = 1a90f87`（最近一次同步提交 `f9119b1 sync code at 2023/10/24`） |
 | 分析方法 | 纯静态代码走查（read-only）。本机未安装 `asyncclick` / `oss2` / `fastapi`，**未做运行期验证**；所有结论均给出 `文件:行号` 证据，凡属推断处均已显式标注 |
-| 报告文件 | `docs/haiplatform/hai-cli-workspace-analysis.md` |
+| 报告文件 | `docs/haiplatform/workspace/hai-cli-workspace-analysis.md` |
 
 ---
 

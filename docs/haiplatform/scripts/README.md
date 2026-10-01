@@ -1,8 +1,8 @@
 # hai-cli workspace · 运维与验证脚本
 
 本目录收录「部署 + 验证 `hai-cli workspace` 链路」用到的脚本，全部来自 192.168.100.103
-测试环境的实际使用（已在真实环境跑通）。配合 [test-environment.md](../test-environment.md)、
-[workspace-dataflow.md](../workspace-dataflow.md)、[workspace-server-task-list.md](../workspace-server-task-list.md) 阅读。
+测试环境的实际使用（已在真实环境跑通）。配合 [test-environment.md](../workspace/test-environment.md)、
+[workspace-dataflow.md](../workspace/workspace-dataflow.md)、[workspace-server-task-list.md](../workspace/workspace-server-task-list.md) 阅读。
 
 > **密钥策略**：本目录**不含任何真实凭据**。对象存储 AK/SK 一律从环境变量传入；
 > 103 环境里的真实取值在 `/nfs-shared/hai-platform/override.toml` 的 `[cloud.storage]`。

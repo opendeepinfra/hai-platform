@@ -2,19 +2,28 @@
 
 本目录收录 `hai-cli workspace` 工作区同步特性的**逆向分析**与**服务端实现设计**文档。
 
+```
+docs/haiplatform/
+├── README.md          本索引
+├── workspace/         特性文档（分析 / 需求 / 设计 / 用例 / Checklist / DB 审计 / 任务清单 / 数据流 / 测试环境）
+└── scripts/           部署与验证脚本（见 §3.5）
+```
+
+> 本索引中的所有链接都指向 `workspace/` 子目录。
+
 ## 0. 测试环境（真实环境）
 
 | 文档 | 内容 | 适用读者 |
 | --- | --- | --- |
-| [test-environment.md](test-environment.md) | **192.168.100.103 真实测试环境**：拓扑与节点规格、浏览器 / `hai-cli` / kubectl·FreeLens 三种访问方式、Terraform 部署流程、π 计算冒烟验证、已固化修复（源码层 / 编排层 / 节点本地）、7 项已知脆弱点、故障恢复 Runbook、DB schema 变更须知 | 全体（部署、联调、排障） |
+| [test-environment.md](workspace/test-environment.md) | **192.168.100.103 真实测试环境**：拓扑与节点规格、浏览器 / `hai-cli` / kubectl·FreeLens 三种访问方式、Terraform 部署流程、π 计算冒烟验证、已固化修复（源码层 / 编排层 / 节点本地）、7 项已知脆弱点、故障恢复 Runbook、DB schema 变更须知 | 全体（部署、联调、排障） |
 
-> 与 [workspace-server-test-cases.md](workspace-server-test-cases.md) §2 的区别：**本文档描述真实已部署环境**；用例集 §2 是供编写用例时假设的抽象设定（单机 `localfs` / 真实 OSS 两条路径）。联调请以本文档为准。
+> 与 [workspace-server-test-cases.md](workspace/workspace-server-test-cases.md) §2 的区别：**本文档描述真实已部署环境**；用例集 §2 是供编写用例时假设的抽象设定（单机 `localfs` / 真实 OSS 两条路径）。联调请以本文档为准。
 
 ## 1. 现状分析
 
 | 文档 | 内容 | 适用读者 |
 | --- | --- | --- |
-| [hai-cli-workspace-analysis.md](hai-cli-workspace-analysis.md) | 对现有仓库的逆向分析：客户端插件、服务端半开源现状、9 个 `/ugc/*` 接口契约、10 项风险（F1–F10）、证据索引 | 全体 |
+| [hai-cli-workspace-analysis.md](workspace/hai-cli-workspace-analysis.md) | 对现有仓库的逆向分析：客户端插件、服务端半开源现状、9 个 `/ugc/*` 接口契约、10 项风险（F1–F10）、证据索引 | 全体 |
 
 ## 2. 服务端设计交付物（4 件套）
 
@@ -22,18 +31,18 @@
 
 | 文档 | 内容 | 关键章节 |
 | --- | --- | --- |
-| [workspace-server-requirements.md](workspace-server-requirements.md) | 服务端实现需求：21 条功能需求、12 个接口、10 条非功能、8 条安全、7 条运维、6 条兼容、10 条硬约束、验收标准、追溯矩阵 | §3 需求总览 · §3.1 硬约束 · §10 DoD · §11 追溯矩阵 |
-| [workspace-server-design.md](workspace-server-design.md) | 程序设计：总体架构、模块与文件清单、接口契约、领域层、兼容层、状态与数据、限额配置、任务侧 `oss://` 与挂载、审计、安全、部署灰度回滚、时序图、12 条 ADR | §4 接口契约 · §5 领域层 · §6 兼容层 · §7 状态与数据 · §10 任务侧 · §15 ADR · §17 WBS |
-| [workspace-server-test-cases.md](workspace-server-test-cases.md) | 功能测试用例：分层策略、环境与数据准备、A–L + DB 共 13 组用例（182 + 12 条）、端到端场景、故障注入、性能/安全/兼容测试、回归矩阵、缺陷分级 | §1 策略 · §4 用例 · §5 E2E 场景 · §10 回归矩阵 |
-| [workspace-server-checklist.md](workspace-server-checklist.md) | 实施与上线 Checklist：GATE/ENV/CFG/DB/DEV/UT/E2E/SEC/PERF/OBS/OPS/TASK/CMP/DOC+DEP/REL/RB/POST/ACC（组数表述见任务列表 §7 #3）、接口契约快照、冒烟脚本、排障速查 | §3 编码完成度 · §4 联调 · §10 发布灰度 · 附录 A/B/C |
-| [workspace-server-db-audit.md](workspace-server-db-audit.md) | 数据库支撑性审计：表结构 ↔ 客户端契约逐字段核对、枚举实测对齐、**3 条 DB 访问层硬约束**、6 个能力缺口（G1–G6）、P1 DDL 与迁移/回滚、TC-DB 用例 | §0 结论 · §2 表核对 · §4 硬约束 · §5 缺口 · §7 迁移机制 |
+| [workspace-server-requirements.md](workspace/workspace-server-requirements.md) | 服务端实现需求：21 条功能需求、12 个接口、10 条非功能、8 条安全、7 条运维、6 条兼容、10 条硬约束、验收标准、追溯矩阵 | §3 需求总览 · §3.1 硬约束 · §10 DoD · §11 追溯矩阵 |
+| [workspace-server-design.md](workspace/workspace-server-design.md) | 程序设计：总体架构、模块与文件清单、接口契约、领域层、兼容层、状态与数据、限额配置、任务侧 `oss://` 与挂载、审计、安全、部署灰度回滚、时序图、12 条 ADR | §4 接口契约 · §5 领域层 · §6 兼容层 · §7 状态与数据 · §10 任务侧 · §15 ADR · §17 WBS |
+| [workspace-server-test-cases.md](workspace/workspace-server-test-cases.md) | 功能测试用例：分层策略、环境与数据准备、A–L + DB 共 13 组用例（182 + 12 条）、端到端场景、故障注入、性能/安全/兼容测试、回归矩阵、缺陷分级 | §1 策略 · §4 用例 · §5 E2E 场景 · §10 回归矩阵 |
+| [workspace-server-checklist.md](workspace/workspace-server-checklist.md) | 实施与上线 Checklist：GATE/ENV/CFG/DB/DEV/UT/E2E/SEC/PERF/OBS/OPS/TASK/CMP/DOC+DEP/REL/RB/POST/ACC（组数表述见任务列表 §7 #3）、接口契约快照、冒烟脚本、排障速查 | §3 编码完成度 · §4 联调 · §10 发布灰度 · 附录 A/B/C |
+| [workspace-server-db-audit.md](workspace/workspace-server-db-audit.md) | 数据库支撑性审计：表结构 ↔ 客户端契约逐字段核对、枚举实测对齐、**3 条 DB 访问层硬约束**、6 个能力缺口（G1–G6）、P1 DDL 与迁移/回滚、TC-DB 用例 | §0 结论 · §2 表核对 · §4 硬约束 · §5 缺口 · §7 迁移机制 |
 
 ## 3. 实施视图（需求梳理 + 任务列表）
 
 | 文档 | 内容 | 关键章节 |
 | --- | --- | --- |
-| [workspace-server-task-list.md](workspace-server-task-list.md) | **执行视图**：本仓库现状实测核对（11 项缺口）、五份文档的需求/接口/约束汇总、P0 分阶段任务列表（S0–S12 + P1-1~4，含文件清单、验收、依赖、估时）、103 环境测试任务（含 `localfs`/真实 OSS 两套环境对照）、待确认决策、文档间不一致裁决项 | §1 现状核对 · §2 需求梳理 · §3 任务列表 · §4 测试任务 · §5 待确认决策 · §7 文档不一致 |
-| [workspace-dataflow.md](workspace-dataflow.md) | **数据流程图**：本地工作区 ↔ RustFS（S3）↔ K8s 共享盘 的 push/pull 时序图与 ASCII 图、任务侧 `s3://` 工作区挂载流程、路径/key 映射、tagging/zip/进度/状态机等关键机制、本环境实际取值速查、复现命令 | §0 一页简图 · §2 push · §3 pull · §4 任务侧 · §5 关键机制 · §6 取值速查 |
+| [workspace-server-task-list.md](workspace/workspace-server-task-list.md) | **执行视图**：本仓库现状实测核对（11 项缺口）、五份文档的需求/接口/约束汇总、P0 分阶段任务列表（S0–S12 + P1-1~4，含文件清单、验收、依赖、估时）、103 环境测试任务（含 `localfs`/真实 OSS 两套环境对照）、待确认决策、文档间不一致裁决项 | §1 现状核对 · §2 需求梳理 · §3 任务列表 · §4 测试任务 · §5 待确认决策 · §7 文档不一致 |
+| [workspace-dataflow.md](workspace/workspace-dataflow.md) | **数据流程图**：本地工作区 ↔ RustFS（S3）↔ K8s 共享盘 的 push/pull 时序图与 ASCII 图、任务侧 `s3://` 工作区挂载流程、路径/key 映射、tagging/zip/进度/状态机等关键机制、本环境实际取值速查、复现命令 | §0 一页简图 · §2 push · §3 pull · §4 任务侧 · §5 关键机制 · §6 取值速查 |
 
 ## 3.5 运维与编排资产
 

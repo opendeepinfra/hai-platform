@@ -1,6 +1,6 @@
 # deploy/terraform · 测试环境编排（Multipass → MicroK8s → Hai Platform）
 
-这套 Terraform 用来从零搭出 [docs/haiplatform/test-environment.md](../../docs/haiplatform/test-environment.md)
+这套 Terraform 用来从零搭出 [docs/haiplatform/workspace/test-environment.md](../../docs/haiplatform/workspace/test-environment.md)
 描述的那套环境（host `103` 上的 4 台 Multipass VM + MicroK8s + MetalLB + Hai Platform）。
 
 > **来源**：从 `hai-install` 仓库原样复制（目录名保持一致，便于与那边交叉对照）。

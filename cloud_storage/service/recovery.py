@@ -120,7 +120,11 @@ async def recover_interrupted_tasks():
                                          no_zip=param.get('no_zip', False),
                                          index=param['index'], force=True)
             elif direction == 'sync_from_cluster':
-                infos = (param.get('file_infos') or {}).get('files') or param.get('file_infos') or []
+                infos = param.get('file_infos') or []
+                if isinstance(infos, dict):
+                    infos = infos.get('files') or []
+                elif not isinstance(infos, list):
+                    infos = []
                 file_type = FileType(param['file_type'])
                 from server_model.selector import AioUserSelector
                 user = await AioUserSelector.find_one(user_name=param['username'])

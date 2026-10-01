@@ -10,6 +10,7 @@
 import asyncio
 import os
 import threading
+import ujson
 from concurrent.futures import wait
 from functools import partial
 
@@ -82,7 +83,7 @@ async def submit_from_cluster(user, name: str, file_type: FileType, file_infos,
         'file_infos': [f.dict() for f in file_infos],
         'index': index,
     }
-    await status_recorder.a_set(param_key(index, True), __import__('ujson').dumps(index_info))
+    await status_recorder.a_set(param_key(index, True), ujson.dumps(index_info))
 
     # 1) 路径与归属校验 + 补齐缺失的 md5/size
     upload_file_infos = []

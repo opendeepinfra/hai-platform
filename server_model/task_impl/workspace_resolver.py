@@ -48,6 +48,42 @@ def _load_check_is_subpath():
     return check_is_subpath
 
 
+def workspace_uri_to_cluster_path(workspace: str):
+    """
+    **纯字符串**解析：把 `<provider>://<group>/<user>/workspaces/<name>` 映射为
+    `<workspace_path>/<group>/<user>/workspaces/<name>`，不做任何归属校验（调用方负责）。
+
+    为什么单独提供这个函数：`add_runtime_mounts` 在 `ITaskImpl.__init__` 里被调用，
+    那个时机**不能访问 `task_impl.user`**（会递归构造 TaskImpl 导致栈溢出），
+    所以挂载阶段只能用这个不依赖 user 的版本。
+
+    :return: 集群绝对路径；不是本 provider 的 URI / 形状非法 / 缺配置时返回 None
+    """
+    if not workspace:
+        return None
+    m = URI_RE.match(workspace)
+    if m is None:
+        return None
+
+    provider = CONF.try_get('cloud.storage.provider', default=None)
+    root = CONF.try_get('cloud.storage.service.workspace_path', default=None)
+    if not provider or not root:
+        return None
+    if m.group('scheme').lower() != str(provider).lower():
+        return None
+
+    remote = m.group('remote')
+    parts = remote.split('/')
+    # 必须是 <group>/<user>/workspaces/<name> 四段，且每段都是普通名字（拒绝 . / .. / 空段）
+    if len(parts) != 4 or parts[2] != 'workspaces':
+        return None
+    if any(p in ('', '.', '..') for p in parts):
+        return None
+
+    root = str(root).rstrip('/') or '/'
+    return f'{root}/{remote}'
+
+
 def resolve_workspace_path(user, workspace: str, *, check_exists: bool = False) -> str:
     """
     把 `oss://<shared_group>/<user_name>/workspaces/<name>` 解析为集群绝对路径。

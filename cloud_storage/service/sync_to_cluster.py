@@ -66,7 +66,7 @@ async def submit_to_cluster(user, name: str, file_type: FileType, files,
     await set_owner(index, False, user)
 
     if len(files) == 0:
-        await finalize_status(index, False, SyncPhase.FINISHED)
+        finalize_status(index, False, SyncPhase.FINISHED)
         return {'index': index, 'dst_path': cluster_base_path, 'accepted': 0, 'skipped': 0,
                 'msg': 'files already synced'}
 

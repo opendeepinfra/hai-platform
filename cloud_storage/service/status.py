@@ -67,9 +67,13 @@ async def get_transfer_status(user, index: str, is_upload: bool) -> dict:
     return {'status': SyncPhase.FAILED, 'msg': phase}
 
 
-async def finalize_status(index: str, is_upload: bool, phase_or_msg):
+def finalize_status(index: str, is_upload: bool, phase_or_msg):
     '''
     写终态：TTL 必须 >= 客户端 --sync_timeout（默认 1800），否则客户端会看到 NOT_FOUND_INDEX（ADR-6）。
+
+    注意：这里必须是**同步**函数 —— 它同时被 `wait_to_cluster` / `wait_from_cluster`
+    这两个跑在后台线程里的函数调用（线程里没有事件循环，写成 async 会导致
+    「coroutine was never awaited」，终态永远写不进去，状态一直悬挂在 running）。
     '''
     status_recorder.delete(status_key(index, 'progress', is_upload))
     status_recorder.set(status_key(index, 'status', is_upload), phase_or_msg,

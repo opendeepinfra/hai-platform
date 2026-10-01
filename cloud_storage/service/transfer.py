@@ -82,8 +82,14 @@ def resumable_download_with_retry(bucket_name,
     '''把对象下载到集群路径；成功后按 tagging 恢复 filemode，zip 则解压后删除临时包。'''
 
     def percentage(consumed_bytes, total_bytes):
-        if total_bytes:
-            status_recorder.hset(status_key(index, 'progress', False), key, consumed_bytes)
+        if not total_bytes:
+            return
+        # zip 包在「下载完成」之后还要解压落盘，客户端却把 progress >= batch_size 当作
+        # 本次同步结束的快捷判据（workspace_util._do_poll_status）。因此 zip 模式下
+        # 只在解压完成后再上报进度，避免客户端解压还没结束就开始提交任务（E2E-06）。
+        if use_zip:
+            return
+        status_recorder.hset(status_key(index, 'progress', False), key, consumed_bytes)
 
     download_succeed = False
     is_dataset = file_type == FileType.DATASET
@@ -139,6 +145,8 @@ def resumable_download_with_retry(bucket_name,
         finally:
             if os.path.exists(filename):
                 os.remove(filename)
+        # 解压与 chown 都完成后再上报进度（见上面 percentage 的说明）
+        status_recorder.hset(status_key(index, 'progress', False), key, size)
 
     if is_dataset and download_succeed:
         try:

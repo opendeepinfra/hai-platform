@@ -68,10 +68,12 @@ async def delete_paths(user, name: str, file_type: FileType, files) -> dict:
             logger.error(f'删除失败 {f}: {str(e)}')
             raise WorkspaceError(ErrorCode.INTERNAL_ERROR, f'删除失败: {str(e)}', http_status=500)
 
-    # 软删 DB 行（list 不再显示）；失败不影响删除结果
-    try:
-        await user.aio_db.soft_delete_sync_status(file_type, name)
-    except Exception as e:
-        logger.error(f'软删 user_sync_status 失败（不影响删除）: {str(e)}')
+    # 只有「删除整个工作区」才软删 DB 行（list 不再显示）；
+    # 仅删部分文件/子目录时，工作区依然存在，记录必须保留（否则 list 会误报「没找到工作区」）
+    if whole_workspace:
+        try:
+            await user.aio_db.soft_delete_sync_status(file_type, name)
+        except Exception as e:
+            logger.error(f'软删 user_sync_status 失败（不影响删除）: {str(e)}')
 
     return {'msg': f'删除成功: {delete_candidates}'}

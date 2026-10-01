@@ -169,9 +169,23 @@ class StatusRecorder:
         self.recorder = recorder
         self.aio_recorder = aio_recorder
 
+    async def _exec_sync(self, method_name, *args, **kwargs):
+        """
+        统一的「异步接口 + 同步客户端」执行器。
+
+        为什么不用 a_redis：aioredis 2.0.0a1 的连接池在 Redis **短暂不可用**之后
+        （典型场景：pod 重启后 MetalLB 还没把 LoadBalancer VIP 指到新 pod，
+        首次连接报 Error 111）会进入不可恢复的状态，之后每次 await 都抛
+        `await wasn't used with future`，导致状态/进度接口全部 500。
+        同步客户端（redis-py）每条命令独立取连接，配合上层 3 次重试可以自愈。
+        """
+        func = getattr(self.recorder, method_name)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
+
     @metrics_wrapper
     async def a_get(self, key):
-        val = await self.aio_recorder.get(key)
+        val = await self._exec_sync('get', key)
         if val:
             return val.decode()
         return None
@@ -181,7 +195,7 @@ class StatusRecorder:
         '''
         获取hash中的所有key/value
         '''
-        members = await self.aio_recorder.hgetall(name)
+        members = await self._exec_sync('hgetall', name)
         ret = {k.decode():int(v.decode()) for k, v in members.items()}
         return ret
 
@@ -190,7 +204,7 @@ class StatusRecorder:
         '''
         获取hash中的所有key
         '''
-        members = await self.aio_recorder.hkeys(name)
+        members = await self._exec_sync('hkeys', name)
         ret = [m.decode() for m in members]
         return ret
 
@@ -199,7 +213,7 @@ class StatusRecorder:
         '''
         获取hash中的所有key/value（保持字符串，不做 int 转换）
         '''
-        members = await self.aio_recorder.hgetall(name)
+        members = await self._exec_sync('hgetall', name)
         ret = {k.decode(): v.decode() for k, v in members.items()}
         return ret
 
@@ -209,29 +223,29 @@ class StatusRecorder:
         SET NX：只有 key 不存在时才写入，返回是否写入成功。
         用于多 worker 之间的互斥锁（设计 ADR-5）。
         '''
-        ret = await self.aio_recorder.set(key, value, ex=expires, nx=True)
+        ret = await self._exec_sync('set', key, value, ex=expires, nx=True)
         return bool(ret)
 
     @metrics_wrapper
     async def a_hset(self, name, key, value):
-        await self.aio_recorder.hset(name, key, value)
+        await self._exec_sync('hset', name, key, value)
 
     @metrics_wrapper
     async def a_set(self, key, value, expires=604800):
-        await self.aio_recorder.set(key, value, expires)
+        await self._exec_sync('set', key, value, ex=expires)
 
     @metrics_wrapper
     async def a_expire(self, key, expires=604800):
-        await self.aio_recorder.expire(key, expires)
+        await self._exec_sync('expire', key, expires)
 
     @metrics_wrapper
     async def a_exists(self, key):
-        ret = await self.aio_recorder.exists(key)
+        ret = await self._exec_sync('exists', key)
         return ret > 0
 
     @metrics_wrapper
     async def a_delete(self, key):
-        await self.aio_recorder.delete(key)
+        await self._exec_sync('delete', key)
 
     @metrics_wrapper
     def get(self, key):

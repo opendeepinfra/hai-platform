@@ -931,10 +931,18 @@ def resolve_workspace_path(user, workspace: str, *, check_exists: bool = False) 
 ```python
 def parse_code_cmd(task_impl: ITaskImpl):
     task_schema = TaskSchema.parse_obj(task_impl.task.schema)
-    workspace = resolve_workspace_path(task_impl.task.user, task_schema.spec.workspace,
-                                       check_exists=True)
+    # check_exists 保持默认 False：manager pod 看不到共享盘（见下方修订说明）
+    workspace = resolve_workspace_path(task_impl.task.user, task_schema.spec.workspace)
     return workspace, task_schema.spec.entrypoint, task_schema.spec.parameters
 ```
+
+> ⚠️ **修订（2026-10-01，实测任务 7 `ugc_e2e3` 卡死）**：这里**不能**传 `check_exists=True`。
+> `parse_code_cmd` 在 task manager pod 内执行，而 manager pod 只挂载 kubeconfig
+> （`launcher.manager_mounts`），看不到 `cloud.storage.service.workspace_path`，
+> `os.path.isdir` 恒为 False → 已 push 好的工作区被误判为「尚未同步」，任务被判死而
+> worker pod 从未创建。存在性校验统一由提交接口在 hai-platform pod 内做
+> （`api/operation/implement.py`，那里能看到共享盘）；若要让 manager 侧也校验，
+> 必须先把工作区根目录挂进 manager pod。
 
 - **透明性**：解析后的路径同时用于 `MARSV2_TASK_WORKSPACE` 与 `cd {code_dir}`（`single_task_impl.py:185,290-291`），用户无需感知。
 - 兼容：非 URI（集群本地路径）行为完全不变（回归保护，见测试 K-05）。

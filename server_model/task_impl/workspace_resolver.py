@@ -90,8 +90,11 @@ def resolve_workspace_path(user, workspace: str, *, check_exists: bool = False) 
 
     :param user: 任务提交人（需要 `shared_group` / `user_name` 两个属性）
     :param workspace: 任务 schema 的 `spec.workspace`
-    :param check_exists: 是否校验集群路径已存在（仅 `parse_code_cmd` 打开；
-        `add_runtime_mounts` 必须保持 False，因为它早于任务创建，不能做 I/O）
+    :param check_exists: 是否校验集群路径已存在。**只允许在能看见共享盘的进程里打开**：
+        目前仅提交接口 `api/operation/implement.py`（hai-platform pod）使用；
+        `parse_code_cmd`（task manager pod）与 `add_runtime_mounts` 都必须保持 False——
+        manager pod 不挂载 `cloud.storage.service.workspace_path`，打开它会把已同步的
+        工作区误判为「尚未同步」（实测任务 7 `ugc_e2e3`）
     :return: 集群绝对路径（无尾部斜杠）；非 URI 原样返回
     """
     # 1) 空 / None：原样返回（不改动旧行为）

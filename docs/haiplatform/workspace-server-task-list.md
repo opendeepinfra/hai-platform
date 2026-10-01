@@ -311,8 +311,9 @@
 | 项 | 内容 |
 | --- | --- |
 | 新增 | `server_model/task_impl/workspace_resolver.py`：`resolve_workspace_path(user, workspace, *, check_exists=False)` |
-| 修改 | `server_model/task_impl/code/default.py`（`parse_code_cmd` 调解析 + 存在性校验）；`server_model/task_impl/runtime_mounts/default.py`（追加挂载） |
-| 要点 | 非 URI 原样返回（回归 K-05）；scheme 必须等于配置 provider；`remote` 必须以 `{shared_group}/{user}/workspaces/` 开头（防越权引用他人工作区）；`check_is_subpath` 防穿越；不存在时文案 `workspace 尚未同步到集群，请先执行 hai-cli workspace push`；挂载 `{host_path=mount_path, mount_type='DirectoryOrCreate', read_only=False, name='workspace-path'}`，与 `storage` 表既有挂载去重；**`add_runtime_mounts` 早于 `parse_code_cmd`，不得做 I/O** |
+| 修改 | `server_model/task_impl/code/default.py`（`parse_code_cmd` **只做解析、`check_exists=False`**——manager pod 看不到共享盘，校验会误判，见下方“修订”）；`server_model/task_impl/runtime_mounts/default.py`（追加挂载） |
+| 要点 | 非 URI 原样返回（回归 K-05）；scheme 必须等于配置 provider；`remote` 必须以 `{shared_group}/{user}/workspaces/` 开头（防越权引用他人工作区）；`check_is_subpath` 防穿越；不存在时文案 `workspace 尚未同步到集群，请先执行 hai-cli workspace push`（**只在提交接口 `api/operation/implement.py` 产生**，那里能看到共享盘）；挂载 `{host_path=mount_path, mount_type='DirectoryOrCreate', read_only=False, name='workspace-path'}`，与 `storage` 表既有挂载去重；**`add_runtime_mounts` 早于 `parse_code_cmd`，不得做 I/O** |
+| 修订 | 2026-10-01：任务 7 `ugc_e2e3` 因 `parse_code_cmd(check_exists=True)` 在 manager pod 内 `os.path.isdir` 恒为 False 而被误判「尚未同步」并卡死，故移除该处校验（`check_exists` 仅提交接口使用） |
 | 验收 | DEV-18/19 + TC-K01~K10：`MARSV2_TASK_WORKSPACE` 与 `cd {code_dir}` 都落到解析后路径 |
 | 需求 | FR-15/16 |
 

@@ -561,10 +561,10 @@ sudo kubectl -n hai-platform get statefulset hai-platform -o jsonpath='{.spec.te
 sudo kubectl -n hai-platform exec hai-platform-0 -- supervisorctl status ugc_server
 
 # 1) 接口冒烟（8 项）
-sudo bash /home/fireflyer/smoke_ugc.sh http://10.205.52.200
+sudo bash /home/fireflyer/smoke_ugc.sh http://10.205.52.200   # 仓库副本：docs/haiplatform/scripts/smoke_ugc.sh
 
 # 2) 7 个子命令 E2E（19 项）
-sudo bash /home/fireflyer/e2e_workspace.sh all
+sudo bash /home/fireflyer/e2e_workspace.sh all                # 仓库副本：docs/haiplatform/scripts/e2e_workspace.sh
 
 # 3) 手工跑一遍
 WS=/tmp/wsdemo && mkdir -p $WS && cd $WS && echo hi > a.txt

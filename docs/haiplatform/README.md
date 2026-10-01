@@ -35,6 +35,13 @@
 | [workspace-server-task-list.md](workspace-server-task-list.md) | **执行视图**：本仓库现状实测核对（11 项缺口）、五份文档的需求/接口/约束汇总、P0 分阶段任务列表（S0–S12 + P1-1~4，含文件清单、验收、依赖、估时）、103 环境测试任务（含 `localfs`/真实 OSS 两套环境对照）、待确认决策、文档间不一致裁决项 | §1 现状核对 · §2 需求梳理 · §3 任务列表 · §4 测试任务 · §5 待确认决策 · §7 文档不一致 |
 | [workspace-dataflow.md](workspace-dataflow.md) | **数据流程图**：本地工作区 ↔ RustFS（S3）↔ K8s 共享盘 的 push/pull 时序图与 ASCII 图、任务侧 `s3://` 工作区挂载流程、路径/key 映射、tagging/zip/进度/状态机等关键机制、本环境实际取值速查、复现命令 | §0 一页简图 · §2 push · §3 pull · §4 任务侧 · §5 关键机制 · §6 取值速查 |
 
+## 3.5 运维与编排资产
+
+| 位置 | 内容 |
+| --- | --- |
+| [scripts/](scripts/) | 部署与验证脚本：镜像离线构建（`build_hai.sh` + `patch_dockerfile.py`）、无 registry 凭据时的部署旁路（`redeploy_local.sh`）、RustFS 部署（`deploy_rustfs.sh`）、`[cloud.storage]` 配置生成（`config_cloud_storage.sh`）、接口冒烟（`smoke_ugc.sh`）、7 子命令 E2E（`e2e_workspace.sh`）、S3 语义验证（`rustfs_check.py`）；含用法与排障速查 |
+| [../../deploy/terraform/](../../deploy/terraform/) | 测试环境编排快照（Multipass VM → MicroK8s → Hai Platform 三层），从 `hai-install` 复制、剔除本地 state 与凭据 |
+
 ## 4. 一页速览（结论）
 
 1. **客户端已完整，服务端是断的**：客户端 9 个 `/ugc/*` 调用中，本仓库只注册 1 个且返回空列表；设计补齐全部 9 个 + 3 个 P1 接口。

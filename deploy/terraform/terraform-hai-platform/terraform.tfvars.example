@@ -1,0 +1,18 @@
+# terraform-hai-platform · 变量示例
+#
+# 用法：复制为 terraform.tfvars 后填入真实值。
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# terraform.tfvars 已被本目录的 .gitignore 忽略，**不会**被提交；
+# 也可以完全不建这个文件，改用环境变量传入（create.sh 支持）：
+#   TF_ADMIN_TOKEN=... TF_CLUSTER_CA_B64=... ./create.sh
+#
+# 其余变量都在 main.tf 里带默认值（与 103 测试环境一致），按需覆盖。
+
+# 集群 admin（cluster-admin）的 Bearer token，会被写进 host 103 上的 kubeconfig。
+admin_token = "REPLACE_ME"
+
+# 集群 CA 的 base64（kubeconfig 的 certificate-authority-data）。
+# 获取方式：
+#   kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}'
+cluster_ca_b64 = "REPLACE_ME"

@@ -148,6 +148,8 @@ FreeLens 默认读 `~/.kube/config`；也可直接导入 `/tmp/kube-merged.yaml`
 | `terraform-multipass-vms/` | 建 Multipass VM |
 
 ```bash
+# 编排的权威副本在 hai-install（Gitee）；本仓库也随特性带了一份快照：
+#   deploy/terraform/terraform-hai-platform/（详见 deploy/terraform/README.md）
 cd /Users/tongxiaojun/github/hai-install/terraform-hai-platform
 
 ./create.sh      # 部署：装 terraform → staging → terraform apply（含 MetalLB、hai-up up、verify、π 冒烟）
@@ -357,7 +359,7 @@ sudo kubectl -n hai-platform exec hai-platform-0 -- sh -c 'ulimit -Hn'   # 65536
 | redis 数据目录 | `/nfs-shared/hai-platform/redis` |
 | 数据库迁移文件 | 镜像内 `/high-flyer/code/multi_gpu_runner_server/db_schemas/*.sql` |
 | 迁移执行器 | 镜像内 `deploy/dbs/files/init_postgresql.sh` |
-| Terraform 编排 | `/Users/tongxiaojun/github/hai-install/terraform-hai-platform/` |
+| Terraform 编排 | `/Users/tongxiaojun/github/hai-install/terraform-hai-platform/`（权威）；本仓库快照 `deploy/terraform/terraform-hai-platform/` |
 | Terraform staging（host 103） | `/opt/terraform/hai-platform/` |
 
 ## 9. 数据库 schema 变更须知

@@ -1,4 +1,4 @@
-create table "task_error_info" (
+create table if not exists "task_error_info" (
     "id" integer not null,
     "error_info" text null,
     constraint "pri-task_error_info-task_id_pod_id" primary key ("id")

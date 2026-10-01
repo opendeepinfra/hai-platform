@@ -1,21 +1,21 @@
-create table "unfinished_task_ng" (
+create table if not exists "unfinished_task_ng" (
     "queue_status" varchar(255) default 'queued',
     constraint "pri-unfinished_task_ng-id" primary key ("id"),
     constraint "unq-unfinished_task_ng-user_name-nb_name" unique ("user_name", "nb_name")
 ) inherits (task_ng);
-create index "idx-unfinished_task_ng-user_name" on "unfinished_task_ng" ("user_name");
-create index "idx-unfinished_task_ng-nb_name" on "unfinished_task_ng" ("nb_name");
-create index "idx-unfinished_task_ng-chain_id" on "unfinished_task_ng" ("chain_id");
-create index "idx-unfinished_task_ng-first_id" on "unfinished_task_ng" ("first_id");
-create index "idx-unfinished_task_ng-suspend_updated_at" on "unfinished_task_ng" ("suspend_updated_at");
-create index "idx-unfinished_task_ng-begin_at" on "unfinished_task_ng" ("begin_at");
-create index "idx-unfinished_task_ng-end_at" on "unfinished_task_ng" ("end_at");
-create index "idx-unfinished_task_ng-created_at" on "unfinished_task_ng" ("created_at");
-create index "idx-unfinished_task_ng-chain_id-varchar" on "unfinished_task_ng"("chain_id" varchar_pattern_ops);
-create index "idx-unfinished_task_ng-worker_status" on "unfinished_task_ng" ("worker_status");
-create index "idx-unfinished_task_ng-backend" on "unfinished_task_ng" ("backend");
-create index "idx-unfinished_task_ng-last_task" on "unfinished_task_ng" ("last_task");
-create index "idx-unfinished_task_ng-queue_status" on "unfinished_task_ng" ("queue_status");
+create index if not exists "idx-unfinished_task_ng-user_name" on "unfinished_task_ng" ("user_name");
+create index if not exists "idx-unfinished_task_ng-nb_name" on "unfinished_task_ng" ("nb_name");
+create index if not exists "idx-unfinished_task_ng-chain_id" on "unfinished_task_ng" ("chain_id");
+create index if not exists "idx-unfinished_task_ng-first_id" on "unfinished_task_ng" ("first_id");
+create index if not exists "idx-unfinished_task_ng-suspend_updated_at" on "unfinished_task_ng" ("suspend_updated_at");
+create index if not exists "idx-unfinished_task_ng-begin_at" on "unfinished_task_ng" ("begin_at");
+create index if not exists "idx-unfinished_task_ng-end_at" on "unfinished_task_ng" ("end_at");
+create index if not exists "idx-unfinished_task_ng-created_at" on "unfinished_task_ng" ("created_at");
+create index if not exists "idx-unfinished_task_ng-chain_id-varchar" on "unfinished_task_ng"("chain_id" varchar_pattern_ops);
+create index if not exists "idx-unfinished_task_ng-worker_status" on "unfinished_task_ng" ("worker_status");
+create index if not exists "idx-unfinished_task_ng-backend" on "unfinished_task_ng" ("backend");
+create index if not exists "idx-unfinished_task_ng-last_task" on "unfinished_task_ng" ("last_task");
+create index if not exists "idx-unfinished_task_ng-queue_status" on "unfinished_task_ng" ("queue_status");
 
 
 create or replace function insert_task()
@@ -27,7 +27,9 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_insert_task on "unfinished_task_ng";
 create trigger trigger_insert_task before insert on "unfinished_task_ng" for each row execute procedure insert_task();
+drop trigger if exists trigger_insert_task_ng on "task_ng";
 create trigger trigger_insert_task_ng before insert on "task_ng" for each row execute procedure insert_task();
 
 create or replace function update_task_queue_status()
@@ -50,6 +52,7 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists update_unfinished_task_ng_queue_status on "unfinished_task_ng";
 create trigger update_unfinished_task_ng_queue_status before update of "queue_status" on "unfinished_task_ng" for each row execute procedure update_task_queue_status();
 
 create or replace function finish_task()
@@ -73,6 +76,7 @@ begin
     return null;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_finish_task on "unfinished_task_ng";
 create trigger trigger_finish_task after update of "queue_status" on "unfinished_task_ng" for each row execute procedure finish_task();
 
 create or replace function update_task_suspend_at()
@@ -89,6 +93,7 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists update_task_ng_suspend_at on "unfinished_task_ng";
 create trigger update_task_ng_suspend_at before update of "suspend_code" on "unfinished_task_ng" for each row execute procedure update_task_suspend_at();
 
 
@@ -101,5 +106,6 @@ begin
 end;
 $$ language 'plpgsql';
 
+drop trigger if exists trigger_update_last_task on "unfinished_task_ng";
 create trigger trigger_update_last_task before insert on "unfinished_task_ng" for each row execute procedure update_last_task();
 

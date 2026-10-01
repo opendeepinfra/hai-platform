@@ -1,4 +1,4 @@
-create table "node_dmesgs" (
+create table if not exists "node_dmesgs" (
     "id" serial,
     "node" varchar(255) not null,
     "start_at" timestamp not null,

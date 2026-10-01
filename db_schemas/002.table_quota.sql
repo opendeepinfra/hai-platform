@@ -1,4 +1,4 @@
-create table "quota" (
+create table if not exists "quota" (
     "user_name" varchar(255) not null,
     "resource" varchar(255) not null,
     "quota" bigint not null default 0,
@@ -12,7 +12,7 @@ comment on column "quota"."user_name" is '用户名';
 comment on column "quota"."resource" is '资源';
 comment on column "quota"."quota" is 'quota';
 
-create index "idx-quota-expire_time" on "quota" ("expire_time");
+create index if not exists "idx-quota-expire_time" on "quota" ("expire_time");
 
 
 create or replace function update_quota_updated_at()
@@ -22,5 +22,6 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_quota_updated_at on "quota";
 create trigger trigger_update_quota_updated_at before update on "quota" for each row execute procedure update_quota_updated_at();
 

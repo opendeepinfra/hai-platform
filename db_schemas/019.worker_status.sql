@@ -24,6 +24,7 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_worker_status_task_ng on "unfinished_task_ng";
 create trigger trigger_update_worker_status_task_ng before update of "worker_status" on "unfinished_task_ng" for each row execute procedure update_worker_status_task_ng();
 
 
@@ -34,4 +35,5 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_worker_status on "pod_ng";
 create trigger trigger_update_worker_status after insert or update of "status" on "pod_ng" for each row execute procedure update_worker_status();

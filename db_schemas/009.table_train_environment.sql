@@ -1,4 +1,4 @@
-create table "train_environment" (
+create table if not exists "train_environment" (
     "env_name" varchar(255) not null,
     "image" varchar(255) not null,
     "schema_template" varchar(2047) not null,

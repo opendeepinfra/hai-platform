@@ -1,4 +1,4 @@
-create table "external_quota_change_log"
+create table if not exists "external_quota_change_log"
 (
 	"editor" varchar not null,
 	"external_user" varchar not null,

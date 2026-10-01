@@ -1,4 +1,4 @@
-create table "task_artifact_mapping" (
+create table if not exists "task_artifact_mapping" (
     "user_name" varchar(255) not null,
     "chain_id" varchar(255) not null,
     "nb_name" varchar(511) not null,
@@ -10,9 +10,9 @@ create table "task_artifact_mapping" (
     "created_at" timestamp not null default current_timestamp,
     constraint "pri-task_artifact_mapping-chain_id" primary key ("chain_id")
 );
-create index "idx-task_artifact_mapping-user_name" on "task_artifact_mapping" ("user_name");
-create index "idx-task_artifact_mapping-in_artifact" on "task_artifact_mapping" ("in_artifact");
-create index "idx-task_artifact_mapping-out_artifact" on "task_artifact_mapping" ("out_artifact");
+create index if not exists "idx-task_artifact_mapping-user_name" on "task_artifact_mapping" ("user_name");
+create index if not exists "idx-task_artifact_mapping-in_artifact" on "task_artifact_mapping" ("in_artifact");
+create index if not exists "idx-task_artifact_mapping-out_artifact" on "task_artifact_mapping" ("out_artifact");
 comment on table "task_artifact_mapping" is 'task_artifact_mapping 表';
 comment on column "task_artifact_mapping"."user_name" is 'task归属用户名';
 comment on column "task_artifact_mapping"."chain_id" is 'task的chain_id';
@@ -31,4 +31,5 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_task_artifact_mapping_updated_at on "task_artifact_mapping";
 create trigger trigger_update_task_artifact_mapping_updated_at before update on "task_artifact_mapping" for each row execute procedure update_task_artifact_mapping_updated_at();

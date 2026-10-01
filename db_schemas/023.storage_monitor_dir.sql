@@ -1,4 +1,4 @@
-create table "storage_monitor_dir" (
+create table if not exists "storage_monitor_dir" (
     "type" varchar(255) not null,
     "host_path" varchar(2047) not null,
     "tag" varchar(255) not null default '',

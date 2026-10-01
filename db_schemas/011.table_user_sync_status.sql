@@ -1,4 +1,4 @@
-create table "user_sync_status" (
+create table if not exists "user_sync_status" (
     "user_name" varchar(255) not null,
     "user_role" varchar(255) not null,
     "file_type" file_type not null,
@@ -14,7 +14,7 @@ create table "user_sync_status" (
     "deleted_at" timestamp,
     constraint "pri-user_sync_status-user_name-file_type-name" primary key ("user_name", "file_type", "name")
 );
-create index "idx-user_sync_status-user_name" on "user_sync_status" ("user_name");
+create index if not exists "idx-user_sync_status-user_name" on "user_sync_status" ("user_name");
 comment on table "user_sync_status" is '用户文件同步状态列表';
 comment on column "user_sync_status"."user_name" is '用户名';
 comment on column "user_sync_status"."user_role" is '用户身份类型';
@@ -37,4 +37,5 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_user_sync_status_updated_at on "user_sync_status";
 create trigger trigger_update_user_sync_status_updated_at before update on "user_sync_status" for each row execute procedure update_user_sync_status_updated_at();

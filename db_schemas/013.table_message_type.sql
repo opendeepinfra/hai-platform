@@ -1,5 +1,9 @@
-create type "message_type" as enum ('normal', 'success', 'warning', 'danger');
-create table "message" (
+do $$
+begin
+  create type "message_type" as enum ('normal', 'success', 'warning', 'danger');
+exception when duplicate_object then null;
+end $$;
+create table if not exists "message" (
     "messageId" serial,
     "important" boolean not null default false,
     "type"message_type not null default 'normal',

@@ -11,6 +11,7 @@ bucket -> 集群 同步（push 的 stage2）—— API-05（FR-05 / FR-10 / FR-1
 import asyncio
 import os
 import threading
+import time
 import ujson
 from concurrent.futures import wait
 from functools import partial
@@ -86,6 +87,7 @@ async def submit_to_cluster(user, name: str, file_type: FileType, files,
         'file_list': files,
         'index': index,
         'instance': get_instance_id(),
+        'created_at': time.time(),
     }
     await status_recorder.a_set(param_key(index, False), ujson.dumps(index_info))
 

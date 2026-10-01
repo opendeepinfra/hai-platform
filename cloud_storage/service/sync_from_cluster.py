@@ -10,6 +10,7 @@
 import asyncio
 import os
 import threading
+import time
 import ujson
 from concurrent.futures import wait
 from functools import partial
@@ -82,6 +83,8 @@ async def submit_from_cluster(user, name: str, file_type: FileType, file_infos,
         'file_type': file_type.value,
         'file_infos': [f.dict() for f in file_infos],
         'index': index,
+        'instance': None,
+        'created_at': time.time(),
     }
     await status_recorder.a_set(param_key(index, True), ujson.dumps(index_info))
 

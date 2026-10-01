@@ -101,6 +101,10 @@ async def recover_interrupted_tasks():
                 if owner_instance in alive:
                     logger.info(f'任务 {k} 的原实例 {owner_instance} 仍存活，跳过')
                     continue
+                if not _stale(param):
+                    # 心跳不可用时的兜底：快照还不够旧，宁可等下一轮也不误抢
+                    logger.info(f'任务 {k} 的原实例 {owner_instance} 心跳不可见，但快照尚未过期，暂不认领')
+                    continue
             if not owner_instance and not _stale(param):
                 continue
 

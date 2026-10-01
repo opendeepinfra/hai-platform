@@ -503,3 +503,79 @@ TC-L01, L02, L04, E2E-01, E2E-02, E2E-05, E2E-06
 | 4 | **`E2E-*` 编号命名空间冲突** | 用例文档 `E2E-01~08` = 8 个端到端场景；Checklist `E2E-01~17` = 17 条联调项，含义不同（如前者 E2E-02 是「增量 push」，后者 E2E-02 是「首次 push」） | 引用时**必须带文档前缀**（本任务列表 §3.2 S10 与 §4.3 已按此处理） |
 
 > 另有 1 处一致性提示（非冲突）：`TC-A51~A53`、`J13`、`J14` 覆盖了 P1 接口，但需求 §11 追溯矩阵把 `API-11`/`API-12` 标为 P1——**实现 P0 时这些用例应显式标记为「不适用」，而不是「未通过」**。
+
+---
+
+## 8. 实施结果 · v1 最小闭环（2026-10-01，已部署并实测通过）
+
+> 范围：用户确认的「只做 P0 / 只做 7 个子命令跑通」。**7 个子命令全部端到端通过**；
+> 任务侧（FR-15/16）已实现并修复了实测暴露的两个致命问题，容器内运行仍需后续验证（见 §8.4）。
+
+### 8.1 交付物与运行环境
+
+| 项 | 值 |
+| --- | --- |
+| 代码分支 | `feature/hai-cli-workspace-server-design`（HEAD 见 `git log`；本文档记录时已含全部修复） |
+| 103 仓库 | `fireflyer@192.168.100.103:~/hai-platform`（与本地同步） |
+| 运行镜像 | `registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:2ad75bf`（**E2E 实测所用镜像**） |
+| 部署方式 | 镜像 `docker save` → `multipass transfer` → `microk8s.ctr images import` → StatefulSet `imagePullPolicy=IfNotPresent`（**本环境 registry push 无凭据**，故不走 registry） |
+| 对象存储 | RustFS（S3 兼容）容器 `rustfs`，端点 `http://192.168.100.103:19000`，bucket `hai-platform-private` / `hai-platform-public` |
+| 服务端配置 | `/nfs-shared/hai-platform/override.toml` 的 `[cloud.storage]` / `[cloud.storage.service]`（`provider='s3'`、`workspace_path='/nfs-shared/hai-platform/workspace'`） |
+| 客户端 | `hai-cli workspace init <name> -p s3`（provider 名必须与服务端一致） |
+
+### 8.2 实测结果
+
+| 验证 | 结果 | 说明 |
+| --- | --- | --- |
+| `/ugc/*` 接口冒烟（附录 B 脚本） | **8/8 PASS** | 含枚举串 + `text/plain` + `{"file_list":{...}}` 兼容形态 |
+| 7 个子命令 E2E | **19/19 PASS** | `init` / `push`（集群侧 md5 一致）/ `diff` / `list` / `pull` / `download` / `remove -f` / `remove` |
+| 任务侧 `oss://` 解析 | 通过 | 提交接口把 `s3://hfai/haiadmin/workspaces/demo` 正确解析为集群路径并写入 `code_file`/`workspace` |
+| 提交期存在性校验 | 通过 | 未 push 时返回「workspace 尚未同步到集群，请先执行 hai-cli workspace push」，**不产生「已创建但立即失败」** |
+
+### 8.3 实测暴露并修复的问题（都是真实阻断）
+
+| # | 现象 | 根因 | 修复 |
+| --- | --- | --- | --- |
+| 1 | 状态/进度/列目录接口全部 500，日志 `await wasn't used with future` | `aioredis 2.0.0a1` 连接池在启动期 Redis 短暂不可用（pod 重启后 MetalLB 尚未宣告 VIP）后进入不可恢复状态 | `StatusRecorder` 的 `a_*` 方法改走**同步 redis 客户端 + 线程池**（`_exec_sync`），配合重试可自愈 |
+| 2 | 同 index 的第二次 push 被「上一次同步正在进行中」永久忽略 | `finalize_status` 写成了 `async def`，却在**后台线程** `wait_to_cluster` / `wait_from_cluster` 里调用 → 协程从未 await → 终态永远写不进去，状态悬挂在 `running` | 改为同步函数（仅用同步 redis 方法） |
+| 3 | `remove -f <file>` 后 `list` 报「没找到工作区」，随后整体 `remove` 失效 | 部分删除也软删了 `user_sync_status` | 只有 `file_list` 为空（删整区）才软删 |
+| 4 | `push` 返回后集群侧文件短暂缺失（提交任务可能拿到不完整代码） | zip 包「下载完成」即上报 progress，客户端 `progress >= batch_size` 的快捷判据提前返回，此时解压/chown 尚未完成 | zip 模式改为**解压完成后**才上报 progress |
+| 5 | manager 容器 `check_running` 反复 SIGABRT（core dumped），任务卡死 | `add_runtime_mounts` 在 `ITaskImpl.__init__` 里访问 `task_impl.task.user` → 递归构造 TaskImpl → 栈溢出 | 挂载阶段改为**纯字符串解析**（新增 `workspace_uri_to_cluster_path`，不碰 user）；归属/存在性校验只在提交接口与 `parse_code_cmd` 做 |
+| 6 | 任务已 push 却报「尚未同步」 | `parse_code_cmd(check_exists=True)` 在 **manager pod** 内执行，而 manager pod 看不到共享盘 → `isdir` 恒 False | manager 侧只做解析；存在性校验统一放提交接口（见 commit `e03c42c`） |
+
+### 8.4 本版未完成 / 已知限制
+
+1. **任务容器内运行未验证**：`oss://` 解析、提交期校验、挂载项生成都已通过；但任务 pod 内 `cd {workspace}` 并执行用户脚本的最终确认尚未完成（§8.3#5/#6 修复后需要重新构建镜像再验证一轮）。
+2. **平台自带客户端的 workspace 自动联动不可用**：`hai-cli python` 只有在客户端以 `external=true` 构建时才会「自动 push + 把 `spec.workspace` 改写成 `oss://`」；本机安装的是**内部模式**客户端（`patch_client.py` 已裁掉该分支）。当前需手工指定 workspace URI，或用 `hai-cli workspace push` 后再提交。
+3. **STS 最小权限降级**：RustFS provider 的 `get_access_token` 下发的是**静态 AK/SK**（S3 兼容存储无阿里云 STS 角色扮演），SEC-02 的「最小权限前缀」在自建存储上未实现；生产需改用 RustFS STS 或 bucket policy。
+4. **registry 推送无凭据**：本环境 `docker push` 报 `insufficient_scope`，部署走「本机 import 到集群 containerd」的旁路；正式发布仍需补 registry 凭据。
+5. **宿主机 192.168.100.103 上已有一个原生 systemd `rustfs`（端口 9000，默认凭据 `rustfsadmin:rustfsadmin` 且匿名可 ListBuckets）**：本版**未触碰**它，RustFS 容器跑在 19000；建议尽快停用或改凭据。
+6. P1（FR-17/18/21、API-10/11/12）未实现；`cloud_storage_quota` 访问器未加（`sync_from_cluster` 用 100 GiB 兜底）。
+
+### 8.5 复现命令
+
+```bash
+# 0) 平台侧：确认镜像与服务
+ssh fireflyer@192.168.100.103
+sudo kubectl -n hai-platform get statefulset hai-platform -o jsonpath='{.spec.template.spec.containers[0].image}'
+sudo kubectl -n hai-platform exec hai-platform-0 -- supervisorctl status ugc_server
+
+# 1) 接口冒烟（8 项）
+sudo bash /home/fireflyer/smoke_ugc.sh http://10.205.52.200
+
+# 2) 7 个子命令 E2E（19 项）
+sudo bash /home/fireflyer/e2e_workspace.sh all
+
+# 3) 手工跑一遍
+WS=/tmp/wsdemo && mkdir -p $WS && cd $WS && echo hi > a.txt
+sudo -u fireflyer -- env HOME=/home/fireflyer hai-cli workspace init demo -p s3
+sudo -u fireflyer -- env HOME=/home/fireflyer hai-cli workspace push
+sudo -u fireflyer -- env HOME=/home/fireflyer hai-cli workspace diff
+sudo -u fireflyer -- env HOME=/home/fireflyer hai-cli workspace list
+sudo -u fireflyer -- env HOME=/home/fireflyer hai-cli workspace pull
+sudo -u fireflyer -- env HOME=/home/fireflyer hai-cli workspace download <subpath>
+sudo -u fireflyer -- env HOME=/home/fireflyer hai-cli workspace remove demo --yes -f a.txt
+sudo -u fireflyer -- env HOME=/home/fireflyer hai-cli workspace remove demo --yes
+```
+
+> 注意：`cluster_files/list` 有 30 s 缓存（FR-04），push 之后立刻 `pull` 可能看到旧列表；E2E 脚本里显式等待 32 s 再验证增量 `pull`。

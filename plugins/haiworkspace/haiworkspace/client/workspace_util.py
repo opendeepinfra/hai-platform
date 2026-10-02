@@ -118,13 +118,21 @@ def print_diff(local_only_files,
 ############################################ 访问 server #################################################
 
 
+def enum_value(value):
+    '''
+    枚举成员一律取 `.value` 后再拼进 URL/命令行（修 F2：`{FileType.ENV}` 会插值成
+    字面量 'FileType.ENV'；`{SyncDirection.PUSH}` 同理）。字符串原样返回。
+    '''
+    return getattr(value, 'value', value)
+
+
 async def get_sts_token(provider, name, file_type, token_expires, **kwargs):
     """
     获取云端存储的临时token
     """
     token = kwargs.get('token', mars_token())
     timeout = 60
-    url = f'{mars_url()}/ugc/get_sts_token?token={token}&name={name}&file_type={file_type}&ttl_seconds={token_expires}'
+    url = f'{mars_url()}/ugc/get_sts_token?token={token}&name={name}&file_type={enum_value(file_type)}&ttl_seconds={token_expires}'
     result = await async_requests(RequestMethod.POST,
                                   url,
                                   retries=3,
@@ -139,7 +147,7 @@ async def set_sync_status(file_type: FileType, workspace_name,
                           local_path, cluster_path, **kwargs):
     token = kwargs.get('token', mars_token())
     timeout = 60
-    url = f'{mars_url()}/ugc/set_sync_status?token={token}&file_type={file_type}&name={workspace_name}&direction={direction}&status={status}&local_path={local_path}&cluster_path={cluster_path}'
+    url = f'{mars_url()}/ugc/set_sync_status?token={token}&file_type={enum_value(file_type)}&name={workspace_name}&direction={enum_value(direction)}&status={enum_value(status)}&local_path={local_path}&cluster_path={cluster_path}'
     await async_requests(RequestMethod.POST, url, retries=3, timeout=timeout)
     return
 
@@ -147,7 +155,7 @@ async def set_sync_status(file_type: FileType, workspace_name,
 async def get_sync_status(file_type: FileType, workspace_name='*', **kwargs):
     token = kwargs.get('token', mars_token())
     timeout = 60
-    url = f'{mars_url()}/ugc/get_sync_status?token={token}&file_type={file_type}&name={workspace_name}'
+    url = f'{mars_url()}/ugc/get_sync_status?token={token}&file_type={enum_value(file_type)}&name={workspace_name}'
     result = await async_requests(RequestMethod.POST,
                                   url,
                                   retries=3,
@@ -158,7 +166,7 @@ async def get_sync_status(file_type: FileType, workspace_name='*', **kwargs):
 async def delete_workspace(workspace_name, files, **kwargs):
     token = kwargs.get('token', mars_token())
     timeout = 60
-    url = f'{mars_url()}/ugc/delete_files?token={token}&name={workspace_name}&file_type={FileType.WORKSPACE}'
+    url = f'{mars_url()}/ugc/delete_files?token={token}&name={workspace_name}&file_type={enum_value(FileType.WORKSPACE)}'
     file_list = FileList(files=list(files))
     data = f'{{"file_list": {file_list.json()}}}'
     await async_requests(RequestMethod.POST, url, retries=3, data=data, timeout=timeout)

@@ -81,3 +81,66 @@ sudo kubectl -n hai-platform exec hai-platform-0 -- \
 | `push` 成功但 bucket 里看不到散文件 | 正常：默认 zip 模式，bucket 里是 `<本地目录名>.zip`，散文件在共享盘 |
 | 刚 push 完 `pull` 看不到新文件 | `cluster_files/list` 的 30s 缓存，等一会儿或换 subpath |
 | 接口返回 `CLOUD_STORAGE_NOT_CONFIGURED` | `override.toml` 缺 `[cloud.storage]`（用 `config_cloud_storage.sh` 生成），或 pod 没重启 |
+
+---
+
+## 5. `hai-cli env`（haienv）—— 联调脚本
+
+配合 [env-server-design.md](../env/env-server-design.md)、[env-server-test-cases.md](../env/env-server-test-cases.md)、
+[env-server-test-report.md](../env/env-server-test-report.md) 阅读。
+
+| 脚本 | 用途 | 用法 | 备注 |
+| --- | --- | --- | --- |
+| [patch_env_override.py](patch_env_override.py) | 幂等写入运行时配置：`env_path`（→ `env_root`）+ `env_push_enabled*` / `env_name_regex` | `sudo python3 patch_env_override.py` | 103 上 `env_path=/nfs-shared/hai-platform/workspace` |
+| [mount_env_root.sh](mount_env_root.sh) | 把 `env_root` 挂进**任务容器**（默认任务只挂 `.../workspace/{user}`，共享的 `hfai_envs` 不在其下） | `bash mount_env_root.sh` | 生产应走 `/operating/mount_point/create` |
+| [env_fixture.py](env_fixture.py) | 造测试用 env（真实 `haienv` 包写 `venv.db` + 可用的 `activate` + 探针包 `haienv_probe_unique`） | `sudo python3 env_fixture.py --env-root … --user … --name … [--clean]` | 替代需要 conda/CUDA 的 `haienv create` |
+| [build_cli_local.sh](build_cli_local.sh) | 在宿主机直接构建并安装 `hai-cli` / `haienv` / `haiworkspace` wheel（免 docker） | `bash build_cli_local.sh` | 含 wheel 自检（`hfai/conf/utils.py` 等必须在内） |
+| [deploy_pod_dev.sh](deploy_pod_dev.sh) | **联调快通道**：把源码 tar 进运行中的 `hai-platform-0`（`/high-flyer/code/multi_gpu_runner_server`）并重启 `ugc_server` | `bash deploy_pod_dev.sh` | 只覆盖服务端代码；**任务侧/manager 仍需重建镜像** |
+| [smoke_env.sh](smoke_env.sh) | env 接口冒烟 19 项（API-11/API-13 正常 / 边界 / 幂等 / 越界 / 鉴权 / 注册表反序列化 / `source haienv`） | `bash smoke_env.sh http://10.205.52.200` | 期望 `PASS=19 FAIL=0` |
+| [e2e_env.sh](e2e_env.sh) | 端到端：fixture → `hai-cli env push` → 注册 → 任务内 `source haienv` + 探针 import | `bash e2e_env.sh` | 期望 `PASS=12 FAIL=0`；需**已部署含 env 实现的镜像** |
+| [verify_env.sh](verify_env.sh) | 一键验证：L1 单元 + 客户端单测 + L2 冒烟 + L3 E2E + workspace 回归 | `bash verify_env.sh`（`SKIP_E2E=1` / `SKIP_REG=1` 可裁剪） | 每步日志落在 `/tmp/verify_env_<step>.log` |
+
+> `patch_dockerfile.py` 还负责两件与本特性无关但必要的事：①把构建期 apt 源从 `archive.ubuntu.com`
+> 换成 `mirrors.aliyun.com`（103 上前者不可达，构建会卡在 `apt-get update`）；②7 条替换规则都带 `skip_if` 标记，
+> 补丁**幂等**（重复对同一 Dockerfile 执行不会报 `PATCH_FAILED`）。
+
+### 5.1 一次完整的 env 联调 + 验证流程
+
+```bash
+ssh fireflyer@192.168.100.103
+
+# ① 运行时配置 + 共享盘/任务容器挂载
+sudo python3 ~/hai-platform/docs/haiplatform/scripts/patch_env_override.py
+bash ~/hai-platform/docs/haiplatform/scripts/mount_env_root.sh
+
+# ② 服务端：联调快的用 deploy_pod_dev.sh；要跑任务侧 E2E 必须重建镜像
+bash build_hai.sh <tag> && bash redeploy_local.sh <tag>
+
+# ③ 客户端：构建并安装带 env push 的 hai-cli
+bash ~/hai-platform/docs/haiplatform/scripts/build_cli_local.sh
+
+# ④ 用例：一条命令跑完全部（L1 单元 + 客户端单测 + L2 接口 + L3 E2E + workspace 回归）
+bash ~/hai-platform/docs/haiplatform/scripts/verify_env.sh
+
+# 或分步执行
+sudo kubectl -n hai-platform exec hai-platform-0 -- sh -c \
+  "cd /high-flyer/code/multi_gpu_runner_server && MARSV2_MANAGER_CONFIG_DIR=/etc/hai_one_config \
+   python3 -m pytest tests/env/test_env_registry.py -q"
+cd ~/hai-platform && HAIENV_PATH=$(mktemp -d) python3 -m pytest tests/env/test_client_push.py -q
+bash ~/hai-platform/docs/haiplatform/scripts/smoke_env.sh http://10.205.52.200
+bash ~/hai-platform/docs/haiplatform/scripts/e2e_env.sh
+```
+
+### 5.2 env 排障速查
+
+| 症状 | 首查 |
+| --- | --- |
+| `env push` 报 `No such command 'workspace'` | 子进程走到了插件二进制 `haiworkspace`，命令里不能再带 `workspace` 词（`_build_push_cmd` 已按可执行文件分支处理） |
+| `env push` 报 `ModuleNotFoundError: hfai.conf.utils` | 客户端 wheel 构建时缺 `astunparse`（`client/install.sh` 中途失败）；用 `build_cli_local.sh` 重建（含自检） |
+| `env push` 报 `上传venv失败` 且日志里是 `haienv workspace push` | E13 未修（客户端过旧） |
+| `update_cluster_venv` 返回 `ENV_REGISTRY_NOT_WRITABLE` | `env_root/<user>` 对平台账号（root）不可写：`sudo chmod 777` 该目录 |
+| `register_cluster_venv` 返回 `PATH_ESCAPE` | `path` 不在 `env_root/<user>/` 之下（例如误传他人目录或 `/tmp/...`） |
+| 任务内报 `no valid env found` 且 `$HAIENV_PATH=/hf_shared/...` | 跑任务的是 **manager 容器**，用的是 `manager_image`：需重建镜像并确认 `override.toml` 的 `manager_image` 已同步到新 tag |
+| 任务内 `$HAIENV_PATH` 目录不存在 | 任务容器没挂 `env_root`：跑 `mount_env_root.sh`（storage 表里的 Directory 挂载） |
+| 启动日志没有 `env path check` | `api/register/implement.py` 的 ugc 段缺 `startup_env_check` 注册，或看的是别的 server 日志 |
+

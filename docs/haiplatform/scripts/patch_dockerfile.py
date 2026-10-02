@@ -15,19 +15,28 @@ import re
 import sys
 
 APT_RETRY = "-o Acquire::Retries=10 -o Acquire::http::Timeout=60"
+# 103 上 archive.ubuntu.com / security.ubuntu.com 基本不可达（实测 curl 超时），
+# 而 mirrors.aliyun.com / mirrors.tuna.tsinghua.edu.cn 有 ~3 MB/s。apt 源必须换掉，
+# 否则 docker build 会卡在第一步 `apt-get update`（实测单次构建 >15min 仍在拉索引）。
+APT_MIRROR_SED = ("sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirrors.aliyun.com/ubuntu|g; "
+                  "s|http://security.ubuntu.com/ubuntu|http://mirrors.aliyun.com/ubuntu|g' "
+                  "/etc/apt/sources.list && \\\n")
 
 # 每条规则：(唯一锚点正则, 替换文本)  —— 用正则是为了对空白不敏感
 RULES = [
-    # 1) apt 增加重试与超时
+    # 1) 换 apt 源 + 增加重试与超时
     (
         r"[ \t]*apt-get update && DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai apt-get -y install tzdata && \\\n",
-        "  apt-get %s update && DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai apt-get -y %s install tzdata && \\\n"
+        "  " + APT_MIRROR_SED
+        + "  apt-get %s update && DEBIAN_FRONTEND=noninteractive TZ=Asia/Shanghai apt-get -y %s install tzdata && \\\n"
         % (APT_RETRY, APT_RETRY),
+        r"mirrors\.aliyun\.com",
     ),
     (
         r"[ \t]*apt-get install -y python3\.8 python3-pip tzdata libcurl4-openssl-dev libssl-dev net-tools \\\n",
         "  apt-get install -y %s python3.8 python3-pip tzdata libcurl4-openssl-dev libssl-dev net-tools \\\n"
         % APT_RETRY,
+        r"apt-get install -y -o Acquire::Retries",
     ),
     # 2) kubectl / decode-protobuf-camel 从 assets 复制
     (
@@ -35,6 +44,7 @@ RULES = [
         "RUN --mount=type=bind,from=assets,target=/tmp/assets \\\n"
         "  cp /tmp/assets/kubectl /usr/local/bin/kubectl && \\\n"
         "  cp /tmp/assets/decode-protobuf-camel /usr/local/bin/decode-protobuf-camel && \\\n",
+        r"cp /tmp/assets/kubectl",
     ),
     # 3) fountain / ambient 从 assets 复制
     (
@@ -45,6 +55,7 @@ RULES = [
         "  mkdir -p /marsv2/scripts && cd /marsv2/scripts && \\\n"
         "  cp /tmp/assets/ambient.tar.gz . && tar zxvf ambient.tar.gz && \\\n"
         "  cp /tmp/assets/fountain.tar.gz . &&  tar zxvf fountain.tar.gz\n",
+        r"cp /tmp/assets/ambient\.tar\.gz",
     ),
     # 4) setuptools / setuptools_scm 钉死版本
     #    注意：103 的工作区 Dockerfile 可能已经打过这个补丁（本地未提交改动），
@@ -61,10 +72,12 @@ RULES = [
         r"RUN pip install jupyterlab_hai_platform_ext && \\\n",
         "RUN --mount=type=bind,from=assets,target=/tmp/assets \\\n"
         "  pip install jupyterlab_hai_platform_ext && \\\n",
+        r"  pip install jupyterlab_hai_platform_ext",
     ),
     (
         r"[ \t]*wget [^\n]*hai-studio-linux-x64[^\n]*\.tar\.gz && tar xzvf (hai-studio-linux-x64[^\n]*\.tar\.gz)\n",
         "  cp /tmp/assets/\\1 . && tar xzvf \\1\n",
+        r"cp /tmp/assets/hai-studio",
     ),
 ]
 

@@ -137,6 +137,72 @@ def check_feature_enabled(user):
                                  f'用户 {user.user_name} 所在用户组不在工作区同步功能白名单内')
 
 
+# ---------------------------------------------------------------------------
+# haienv（`hai-cli env push`）—— 设计 docs/haiplatform/env/env-server-design.md §3.4 / §9
+# ---------------------------------------------------------------------------
+
+def get_env_path() -> str:
+    '''env 家族父根（配置 [cloud.storage.service] env_path），默认 /hf_shared。'''
+    from conf.utils import get_env_path as _get_env_path
+    return _get_env_path()
+
+
+def get_env_root() -> str:
+    '''env_root = {env_path}/hfai_envs = dirname(HAIENV_PATH)。'''
+    from conf.utils import get_env_root as _get_env_root
+    return _get_env_root()
+
+
+def get_user_env_dir(user) -> str:
+    from conf.utils import get_user_env_dir as _get_user_env_dir
+    return _get_user_env_dir(getattr(user, 'user_name', user))
+
+
+def get_env_registry_path(user) -> str:
+    '''{user_env_dir}/venv.db —— 用户集群侧注册表路径。'''
+    from conf.utils import get_env_registry_path as _get_env_registry_path
+    return _get_env_registry_path(getattr(user, 'user_name', user))
+
+
+def get_env_push_enabled() -> bool:
+    return bool(cfg('cloud.storage.service.env_push_enabled', default=True))
+
+
+def check_env_push_enabled(user):
+    '''
+    env 灰度开关（FR-12 / OPS-02）：env_push_enabled / env_push_enabled_users /
+    env_push_enabled_groups。关闭时两个接口都返回 FEATURE_DISABLED，且不写库、不改文件。
+    '''
+    if not get_env_push_enabled():
+        raise WorkspaceError(ErrorCode.FEATURE_DISABLED, 'env 上传功能未开启')
+
+    enabled_users = cfg('cloud.storage.service.env_push_enabled_users', default=None) or []
+    if enabled_users and user.user_name not in list(enabled_users):
+        raise WorkspaceError(ErrorCode.FEATURE_DISABLED,
+                             f'用户 {user.user_name} 不在 env 上传功能白名单内')
+
+    enabled_groups = cfg('cloud.storage.service.env_push_enabled_groups', default=None) or []
+    if enabled_groups:
+        try:
+            allowed = user.in_any_group(list(enabled_groups))
+        except Exception:
+            allowed = False
+        if not allowed:
+            raise WorkspaceError(ErrorCode.FEATURE_DISABLED,
+                                 f'用户 {user.user_name} 所在用户组不在 env 上传功能白名单内')
+
+
+def get_env_name_regex() -> str:
+    '''
+    名称白名单（FR-08）。配置可收紧，但**不允许**放宽到含 '/'（SEC-04）。
+    '''
+    from conf.utils import ENV_NAME_RE
+    pattern = str(cfg('cloud.storage.service.env_name_regex', default=ENV_NAME_RE.pattern) or '')
+    if not pattern or '/' in pattern:
+        pattern = ENV_NAME_RE.pattern
+    return pattern
+
+
 def build_cloud_api():
     '''
     按配置构造 provider 实例。惰性调用（不要在导入期调用）。

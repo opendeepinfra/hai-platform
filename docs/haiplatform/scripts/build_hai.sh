@@ -50,6 +50,10 @@ grep -n "boto3" "${BUILD_DIR}/requirements.txt" || { echo "boto3 missing in requ
 
 echo "STEP: docker buildx build  $(date +%T)"
 cd "${BUILD_DIR}"
+# 注意：这里曾经是 `docker buildx build … | tail -40`，管道让 `set -e` 失效——
+# 镜像构建失败时脚本仍然打印 "ALL DONE"，把失败静默吞掉。改为 tee + pipefail。
+set -o pipefail
+BUILD_LOG="${BUILD_LOG:-${BUILD_ROOT}/hai-build-${TAG}-docker.log}"
 sudo docker buildx build \
   --build-context assets="${ASSETS}" \
   --build-arg HAI_VERSION="${TAG}" \
@@ -58,11 +62,15 @@ sudo docker buildx build \
   -t "hai-platform:${TAG}" \
   -t "${REGISTRY}:${TAG}" \
   --load \
-  . 2>&1 | tail -40
+  . 2>&1 | tee "${BUILD_LOG}" | tail -40
+
+echo "STEP: verify image exists"
+sudo docker images --format '{{.Repository}}:{{.Tag}}' | grep -qx "hai-platform:${TAG}" || {
+  echo "ERROR: 镜像 hai-platform:${TAG} 未生成（详见 ${BUILD_LOG}）"; exit 1; }
 
 echo "STEP: build hai-cli wheels"
 export HAI_VERSION="${TAG}"
-bash one/build_cli.sh 2>&1 | tail -10 || echo "WARN: build_cli.sh failed (客户端 wheel 非必需)"
+bash one/build_cli.sh 2>&1 | tail -10
 
 echo "STEP: image info"
 sudo docker images | grep -E "hai-platform\s+${TAG}|opendeepinfra/hai-platform\s+${TAG}" || true

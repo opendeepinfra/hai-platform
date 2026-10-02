@@ -1,5 +1,12 @@
 # HAI Platform · `hai-cli env`（haienv）服务端实施与上线 Checklist
 
+> **实施进度（103 实测）**:阶段 1–5 的**可自动化部分已执行并留有证据**,见
+> [env-server-test-report.md](env-server-test-report.md)(L1 单元 40 passed / 覆盖率 100%;L2 冒烟 19/19;
+> 客户端单测 9 passed;L3 E2E 12/12 含任务内 `source haienv` + 探针 import;workspace 回归 `smoke_ugc` 8/8、`e2e_workspace` 19/19;
+> 一键脚本 `scripts/verify_env.sh` → PASS=6 FAIL=0)。
+> 未执行项(压测 PERF、故障注入 FI-04/06、动态灰度与回滚演练 RB、发布灰度 REL)已在报告 §8.1 列出。
+> 本表仍按发布流程保留逐项勾选,勾选时请填报告中的证据位置。
+>
 > **文档定位**:`docs/haiplatform/env/` 四件套之四(《[分析](hai-cli-env-analysis.md)》→《[需求](env-server-requirements.md)》→《[设计](env-server-design.md)》→《[用例](env-server-test-cases.md)》→ **Checklist**)。
 > **使用方式**:按阶段自上而下勾选;每项须给出**可核验的证据**（命令输出 / 文件路径 / 截图 / 测试报告编号），不接受口头确认。
 > **ID 说明**:本表 ID（`GATE-xx` / `ENV-xx` / `CFG-xx` / `REG-xx` / `DEV-xx` / `UT-xx` / `API-xx` / `E2E-xx` / `SEC-xx` / `PERF-xx` / `OBS-xx` / `OPS-xx` / `TASK-xx` / `CMP-xx` / `REL-xx` / `DOC-xx` / `DEP-xx` / `RB-xx` / `POST-xx` / `ACC-xx`）是**检查项编号**,与《需求》的 `FR/NFR/SEC/OPS/CMP/HC` 与《用例》的 `TC-*` 不同源,勿混用。

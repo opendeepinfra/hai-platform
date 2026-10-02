@@ -6,7 +6,7 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 from rich.box import ASCII2
-from .model import get_db_path, get_path_prefix, Haienv
+from .model import get_db_path, get_path_prefix, Haienv, check_user_name
 import getpass
 import json
 
@@ -46,6 +46,37 @@ async def create(haienv_name, no_extend, py, extra_search_dir, extra_search_bin_
 
 
 @click.command(cls=HaienvHandleHfaiCommandArgs)
+@click.argument('haienv_name', required=True, metavar='haienv_name')
+@click.option('--force', required=False, is_flag=True, default=False, help='是否强制推送并覆盖集群侧同名文件, 默认值为False')
+@click.option('-n', '--no_checksum', required=False, is_flag=True, default=False, help='是否对文件禁用checksum比对, 默认值为False')
+@click.option('-z', '--no_zip', required=False, is_flag=True, default=False, help='是否禁用打包上传, 默认值为False')
+@click.option('-d', '--no_diff', required=False, is_flag=True, default=False, help='是否禁用差量上传, 默认值为False')
+@click.option('-l', '--list_timeout', required=False, is_flag=False, type=click.IntRange(5, 7200), default=300, show_default=True, help='遍历集群目录的超时时间, 单位(s)')
+@click.option('-s', '--sync_timeout', required=False, is_flag=False, type=click.IntRange(5, 21600), default=1800, show_default=True, help='等待同步任务提交成功的超时时间, 单位(s)')
+@click.option('-o', '--cloud_connect_timeout', required=False, is_flag=False, type=click.IntRange(60, 43200), default=120, show_default=True, help='从本地上传分片到云端的连接超时时间, 单位(s)')
+@click.option('-t', '--token_expires', required=False, is_flag=False, type=click.IntRange(900, 43200), default=1800, show_default=True, help='从本地上传到云端的sts token有效时间, 单位(s)')
+@click.option('-m', '--part_mb_size', required=False, is_flag=False, type=click.IntRange(10, 10240), default=100, show_default=True, help='从本地上传到云端的分片大小, 单位(MB)')
+@click.option('--provider', required=False, is_flag=False, default='', help='云端存储 provider, 默认取 $CLOUD_STORAGE_PROVIDER 或 oss')
+@click.option('--proxy', required=False, is_flag=False, default='', help='从本地上传到云端时使用的代理url')
+async def push(haienv_name, force, no_checksum, no_zip, no_diff, list_timeout, sync_timeout,
+               cloud_connect_timeout, token_expires, part_mb_size, provider, proxy):
+    """
+    把本地虚拟环境推送到集群（仅支持非 extend 环境）
+
+    eg. haienv push my_env
+    """
+    from hfai.client.api.venv_api import push_venv
+    result = await push_venv(venv_name=haienv_name, force=force, no_checksum=no_checksum,
+                             no_zip=no_zip, no_diff=no_diff, list_timeout=list_timeout,
+                             sync_timeout=sync_timeout, cloud_connect_timeout=cloud_connect_timeout,
+                             token_expires=token_expires, part_mb_size=part_mb_size,
+                             provider=provider, proxy=proxy)
+    print(result.get('msg', ''), flush=True)
+    if not result.get('success'):
+        sys.exit(1)
+
+
+@click.command(cls=HaienvHandleHfaiCommandArgs)
 @click.option('-u', '--user', help='指定用户，默认为所有用户')
 @click.option('-a', '--all', 'show_all', required=False, is_flag=True, default=False, help='列出所有环境')
 @click.option('-o', 'output_format', default='', help='输出格式，可以选择json')
@@ -54,6 +85,11 @@ async def list(user, show_all, output_format=''):
     列举所有虚拟环境
     """
     assert output_format in ['', 'json'], '目前输出格式只支持json'
+    try:  # SEC-06 / E9：-u 会被拼进路径，先校验再使用
+        check_user_name(user)
+    except ValueError as e:
+        print(f'参数错误：{e}')
+        sys.exit(1)
     root_path = os.path.realpath(os.path.join(get_db_path(), '../..'))
     all_result = []
     for _user in sorted(os.listdir(root_path)):
@@ -119,6 +155,11 @@ async def show(haienv_name, user):
     """
     展示指定haienv的各项参数
     """
+    try:  # SEC-06 / E9
+        check_user_name(user)
+    except ValueError as e:
+        print(f'参数错误：{e}')
+        sys.exit(1)
     root_path = os.path.realpath(os.path.join(get_db_path(), f'../../{user}/venv.db')) if user is not None else get_db_path()
     haienv_config = Haienv.select(haienv_name=haienv_name, outside_db_path=root_path)
     assert haienv_config is not None, f'未找到该环境，当前虚拟环境目录为{get_path_prefix()}，请通过haienv list查看所有环境，或设置环境变量HAIENV_PATH进行更改'

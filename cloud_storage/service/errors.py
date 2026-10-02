@@ -22,6 +22,11 @@ class ErrorCode:
     PAYLOAD_TOO_LARGE = 'PAYLOAD_TOO_LARGE'
     CLIENT_RETRY = 'CLIENT_RETRY'
     INTERNAL_ERROR = 'INTERNAL_ERROR'
+    # haienv（`hai-cli env`）新增错误码 —— 设计 docs/haiplatform/env/env-server-design.md §4
+    ENV_ALREADY_EXISTS = 'ENV_ALREADY_EXISTS'
+    ENV_REGISTRY_NOT_WRITABLE = 'ENV_REGISTRY_NOT_WRITABLE'
+    ENV_REGISTRY_WRITE_FAILED = 'ENV_REGISTRY_WRITE_FAILED'
+    ENV_PATH_MISMATCH = 'ENV_PATH_MISMATCH'
 
 
 class WorkspaceError(Exception):

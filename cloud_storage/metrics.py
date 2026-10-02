@@ -1,5 +1,5 @@
 
-from prometheus_client import Counter, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 
 RUNNING_TASKS_GAUGE = Gauge(
@@ -43,4 +43,26 @@ BUCKET_USAGE_SIZE = Gauge(
     "cloud_storage_bucket_usage_size",
     "cloud storage bucket usage.",
     labelnames=("group", "user", "file_type",)
+)
+
+# ---------------------------------------------------------------------------
+# haienv（`hai-cli env push`）指标 —— 设计 docs/haiplatform/env/env-server-design.md §9.4
+# ---------------------------------------------------------------------------
+
+env_push_requests_total = Counter(
+    "env_push_requests_total",
+    "env push (/ugc/update_cluster_venv, /ugc/register_cluster_venv) requests.",
+    labelnames=("api", "result", "code",)
+)
+
+env_register_duration_seconds = Histogram(
+    "env_register_duration_seconds",
+    "env registry write duration.",
+    labelnames=("result",)
+)
+
+env_registry_write_failures_total = Counter(
+    "env_registry_write_failures_total",
+    "env registry write failures.",
+    labelnames=("reason",)
 )

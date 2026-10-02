@@ -1,7 +1,7 @@
 import os
 import getpass
 import sys
-from haienv.client.model import Haienv
+from haienv.client.model import Haienv, check_user_name
 
 keys = list(sys.modules.keys())
 for removed_key in [key for key in keys if 'pkg_resources' in key]:
@@ -21,6 +21,7 @@ def set_env(haienv_name, user: str = None):
     if user is None:
         user = haienv_name.split('[')[-1].split(']')[0] if '[' in haienv_name else None
     haienv_name = haienv_name.split('[')[0]
+    check_user_name(user)  # SEC-06 / E9：-u/<name>[user] 会拼进路径，先校验
 
     if not db_path:
         raise Exception('获取haienv_path出错')
@@ -88,6 +89,7 @@ def get_envs( user: str = None):
     """
     if not db_path:
         raise Exception('获取venv_path出错')
+    check_user_name(user)  # SEC-06 / E9
     root_path = os.path.realpath(os.path.join(db_path, '../..'))
     results = []
     for _user in sorted(os.listdir(root_path)):

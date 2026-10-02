@@ -82,9 +82,16 @@ if 'ugc' in REG_SERVERS:
     app.get('/ugc/sync_from_cluster/status')(ar_cloud_storage.sync_from_cluster_status)
     app.post('/ugc/delete_files')(ar_cloud_storage.delete_files)
 
+    # hai-cli env（haienv）推送：API-11 预检 / API-13 注册（设计 docs/haiplatform/env/env-server-design.md §4）
+    # 注意：不要放到 ar_cloud_storage.* 下，避免破坏「workspace 客户端接口 ↔ 函数」的一一对应
+    app.post('/ugc/update_cluster_venv')(ar_storage.update_cluster_venv)
+    app.post('/ugc/register_cluster_venv')(ar_storage.register_cluster_venv)
+
     # 崩溃恢复与进程池回收：只在 ugc-server 的 startup/shutdown 钩子里触发（ADR-12）
     app.add_event_handler('startup', ar_cloud_storage.startup_recover)
     app.add_event_handler('shutdown', ar_cloud_storage.shutdown_workers)
+    # env 路径自检（OPS-01，只告警不阻断）
+    app.add_event_handler('startup', ar_storage.startup_env_check)
 
 
 if 'query' in REG_SERVERS:

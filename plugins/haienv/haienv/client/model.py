@@ -33,6 +33,22 @@ def set_path_prefix(path_prefix):
     __path_prefix = path_prefix
 
 
+def check_user_name(user):
+    '''
+    校验 -u/--user 参数（SEC-06 / 分析报告 E9）。
+
+    该参数会被直接拼进 `{HAIENV_PATH}/../../{user}/venv.db`，因此必须拒绝
+    '..' / '/' / '\\\\' / NUL 与首尾空白；合法时原样返回，非法抛 ValueError。
+    '''
+    if user is None:
+        return None
+    if not isinstance(user, str) or user == '' or user != user.strip():
+        raise ValueError(f'用户名 {user!r} 非法')
+    if user in ('.', '..') or any(ch in user for ch in ('/', '\\', '\x00')):
+        raise ValueError(f'用户名 {user!r} 非法：不允许包含路径分隔符或父目录')
+    return user
+
+
 class HaienvConfig:
     def __init__(self, path='', extend='', extend_env='', py='', extra_search_dir=None, extra_search_bin_dir=None, extra_environment=None, **kwargs):
         self.path = path

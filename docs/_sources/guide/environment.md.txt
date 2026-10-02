@@ -76,3 +76,42 @@ haienv create < myenv >
 除此以外，`haienv` 支持用户在本地（集群外）建立个人环境并推送到集群，这种方式建立的环境无法扩展基础环境，需要用户自己验证和维护。
 
 自建环境与集群默认环境使用方式相同，支持提交任务指定和代码中加载。
+
+### 把本地环境推送到集群（`hai-cli env push`）
+
+在本地（集群外）机器上创建环境后，用 `env push` 上传并在集群侧登记，之后即可像集群内自建环境一样使用：
+
+```shell
+# 1) 本地创建（注意 --no_extend：**扩展环境（extend）不支持上传**）
+haienv create myenv --no_extend --py 3.8
+
+# 2) 推送：内部流程为「预检 → 上传（对象存储 → 集群共享盘）→ 写集群侧注册表」
+hai-cli env push myenv --provider s3          # provider 需与服务端 [cloud.storage].provider 一致
+
+# 3) 提交任务时指定该环境（任务启动脚本会自动 source haienv）
+HF_ENV_NAME=myenv HF_ENV_OWNER=<你的用户名> hai-cli python train.py -- -n 1 -g training --name exp1
+```
+
+```shell
+# 查看与验证
+hai-cli env list                 # 集群侧（共享盘）可见的环境列表
+source haienv myenv              # 在集群/开发容器内加载
+```
+
+**前置条件与限制**
+
+- 只支持**非 extend** 环境；`extend=True` 会被客户端与服务端同时拒绝。
+- 本地环境需要与集群的基础系统/驱动匹配（建议本机 Python 版本与目标环境一致）。
+- 首次推送依赖集群侧 `env_root/<用户名>` 目录对平台账号可写；若报
+  `ENV_REGISTRY_NOT_WRITABLE`，请联系管理员修正目录权限。
+
+**常见失败与处置**
+
+| 现象 | 原因 | 处置 |
+| --- | --- | --- |
+| `未找到名为 X 的虚拟环境` | 本地 `HAIENV_PATH` 下没有该环境 | `HAIENV_PATH=<创建时目录> hai-cli env list` 确认 |
+| `暂不支持上传 extend 模式的 venv` | 环境是扩展环境 | 用 `--no_extend` 重建 |
+| `上传失败：… 退出码非 0` | 网络/对象存储/STS 问题 | 检查 `--provider` 与服务端 `[cloud.storage].provider` 是否一致后重试 |
+| `环境已上传但注册失败，可重试` | 集群侧注册表写入失败（权限/锁） | 修复后**重复执行同一条命令**即可只补登记、不重传 |
+| 任务内报 `no valid env found` | 未推送成功 / `HF_ENV_OWNER` 不对 / 任务环境变量未生效 | 先 `hai-cli env list` 确认可见；确认 `HF_ENV_OWNER` |
+

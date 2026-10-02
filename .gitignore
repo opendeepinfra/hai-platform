@@ -12,3 +12,10 @@ build/
 **/*.tfstate.*
 **/terraform.tfvars
 **/crash.log
+
+# ── hai-cli / 插件 wheel 本地构建产物（one/build_cli.sh）──────
+/one/hfai/
+/one/dist/
+/one/*.egg-info/
+/one/hai-cli
+/one/hai-up

@@ -110,6 +110,10 @@ official_website_bucket = 'hai-platform-private'
 [cloud.storage.service]
 # 工作区在集群共享盘上的根目录
 workspace_path = '/nfs_shared/workspace'
+# haienv（`hai-cli env`）家族的父根：env_root = {env_path}/hfai_envs，
+# 也是任务运行时 HAIENV_PATH 的父目录（HAIENV_PATH = {env_root}/{user}）。
+# 见 docs/haiplatform/env/env-server-design.md §3.1 / ADR-E1：改这里会同时影响
+# 数据面落盘目录（get_base_path 的 ENV 分支）与任务侧 source haienv 的搜索根。
 env_path = '/hf_shared'
 public_dataset_path = '/nfs_shared/public_dataset'
 private_dataset_path = '/nfs_shared/private_dataset'
@@ -135,3 +139,10 @@ max_page_size = 1000
 recover_on_startup = true
 recover_stale_seconds = 600
 workers = 4
+# haienv（`hai-cli env push`）灰度开关与名称白名单 —— 设计 §9.1
+# env_push_enabled=false 时 /ugc/update_cluster_venv 与 /ugc/register_cluster_venv 均返回 FEATURE_DISABLED
+env_push_enabled = true
+env_push_enabled_users = []
+env_push_enabled_groups = []
+# 可收紧不可放宽到含 '/'（服务端对含 '/' 的配置会退回内置白名单）
+env_name_regex = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'

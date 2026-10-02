@@ -19,7 +19,8 @@ from fastapi_pagination.api import create_page, resolve_params
 from fastapi_pagination.bases import AbstractPage, AbstractParams
 
 from conf import CONF
-from conf.utils import FileInfo, FileType, FilePrivacy, DatasetType, list_local_files_inner, hashkey
+from conf.utils import (FileInfo, FileType, FilePrivacy, DatasetType, list_local_files_inner, hashkey,
+                        get_env_root)
 from db import a_redis, redis_conn
 from utils import asyncwrap
 from .metrics import DB_FAILURE_COUNTER
@@ -467,11 +468,13 @@ def get_base_path(username, group, name, file_type, file_privacy: FilePrivacy = 
         cloud_base_path = f'{group}/{username}/workspaces/{name}'
         check_is_subpath(workspace_base_path, cluster_base_path)
     elif file_type == FileType.ENV:
-        # 本地venv根目录
-        env_base_path = CONF.cloud.storage.service.env_path
-        cluster_base_path = f'{env_base_path}/{group}/shared/hfai_envs/{username}/{name}'
+        # 本地 venv 根目录：与任务运行时 dirname(HAIENV_PATH) 对齐（设计 §3.3 / ADR-E1）
+        #   cluster: {env_root}/{username}/{name}       ← 数据面真正落盘的位置
+        #   cloud  : {group}/shared/hfai_envs/...       ← S3 key 布局保持不变（CMP-05）
+        env_root = get_env_root()
+        cluster_base_path = f'{env_root}/{username}/{name}'
         cloud_base_path = f'{group}/shared/hfai_envs/{username}/{name}'
-        check_is_subpath(env_base_path, cluster_base_path)
+        check_is_subpath(env_root, cluster_base_path)
     elif file_type == FileType.DATASET:
         # 本地数据集根目录, public
         public_dataset_base_path = CONF.cloud.storage.service.public_dataset_path

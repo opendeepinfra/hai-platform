@@ -52,6 +52,10 @@ docs/haiplatform/
 | [env-server-design.md](env/env-server-design.md) | **程序设计**：路径约定单点化与对齐（`env_root`）、两接口契约与领域层签名、注册表写入（复用镜像内 `haienv` 包）、写权限探测、客户端 `env push` 子命令与 `push_venv` 重写、任务侧改动、端到端时序图、灰度/回滚/可观测、安全与兼容、7 条 ADR（E1–E7）、WBS 与里程碑（≈6.5 人日） | §2 架构 · §3 路径约定 · §4 接口契约 · §5 服务端 · §6 客户端 · §13 ADR · §14 WBS |
 | [env-server-test-cases.md](env/env-server-test-cases.md) | **功能测试用例**：分层模型（L1–L4）、`localfs`/真实 S3 两套环境与 env fixture 构造、**11 组 106 条用例（U/A/P/C/REG/S/F/O/T/L/I）**、8 个端到端场景、8 条故障注入矩阵、优先级与回归矩阵（含 workspace 回归）、缺陷分级、需求↔用例↔验收追溯表 | §1 策略 · §2 环境与 fixture · §3 总览 · §4 详细用例 · §5 E2E · §6 故障注入 · §7 回归矩阵 · §9 追溯 |
 | [env-server-checklist.md](env/env-server-checklist.md) | **实施与上线 Checklist**：16 个阶段（阶段 0–15：GATE/ENV/CFG/**REG**（替代 workspace 的 DB 阶段，本特性零 DDL）/DEV/UT/API/E2E/SEC/PERF/OBS/OPS/TASK/CMP/REL/DOC+DEP/RB/POST/ACC）、接口契约快照（附录 A）、冒烟脚本（附录 B）、排障速查（附录 C）、与 workspace 组的映射（附录 D） | §1 GATE · §2 ENV/CFG/REG · §3–4 DEV/API · §5 E2E · §12 REL · §14 RB · §16 ACC · 附录 A/B/C/D |
+| [env-server-test-report.md](env/env-server-test-report.md) | **实现与 103 实测记录**：落地文件清单与关键实现决策、L1 单元（40 条 / `env_registry` 行覆盖率 100%）、L2 接口冒烟（19/19）、客户端单测（9/9）、E2E（fixture → `env push` → 任务 `source haienv` → 探针 import）、workspace 回归、实现期新发现并修复的 4 个缺陷、AC-01~AC-12 对照 | §1 落地清单 · §2 环境 · §3 L1 · §4 L2 · §5 E2E · §6 缺陷 · §7 验收对照 |
+
+联调脚本（`env_fixture.py` / `build_cli_local.sh` / `deploy_pod_dev.sh` / `mount_env_root.sh` /
+`patch_env_override.py` / `smoke_env.sh` / `e2e_env.sh`）见 [scripts/README.md](scripts/README.md) §5。
 
 ## 3. 实施视图（需求梳理 + 任务列表）
 

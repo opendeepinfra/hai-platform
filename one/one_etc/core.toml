@@ -165,7 +165,7 @@ registry = 'registry.high-flyer.cn'
 # 数据面后端：register（P0 默认，只登记，运行期由 link 脚本真正导入）/ task / registry
 loader_backend = 'register'
 # 可收紧不可放宽到含 '/'（服务端对含 '/' 的配置会退回内置白名单）
-name_regex = '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,127})?$'
+name_regex = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$'
 # load-image initContainer 的基础镜像（Q-6 / ADR-I4）：
 # 必须改成**计算节点本地已有**的镜像，否则会 ImagePullBackOff（103 上内网 registry 不可达）
 load_helper_image = 'docker.io/library/busybox:latest'

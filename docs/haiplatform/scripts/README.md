@@ -159,31 +159,26 @@ bash ~/hai-platform/docs/haiplatform/scripts/e2e_env.sh
 
 ---
 
-## 6. `hai-cli images`（用户自定义镜像）—— 现状基线探测
+## 6. `hai-cli images`（用户自定义镜像）—— 实施、联调与验证
 
-> 配合阅读：[hai-cli-images-analysis.md](../images/hai-cli-images-analysis.md)（§9 实测原始输出） ·
+> 配合阅读：[images-server-decisions.md](../images/images-server-decisions.md)（S0 决策冻结与文档不一致裁决） ·
 > [images-server-design.md](../images/images-server-design.md) ·
 > [images-server-test-cases.md](../images/images-server-test-cases.md)（§5 E2E-01 是端到端判据）
 
-**本特性尚未开工**，因此本节的脚本**只做只读探测**：固化「现状基线」，并在实施后作为最小回归重跑。
+**实施状态见 [images-server-test-report.md](../images/images-server-test-report.md)**（落地文件、L1/L2/L3 实测、AC 对照）。
 
 | 脚本 | 用途 | 用法 | 是否需要凭据 |
 | --- | --- | --- | --- |
-| [probe_images.sh](probe_images.sh) | `images` 现状基线探测：命令面 / 4 条接口 HTTP 码 / `train_image` 行数 / **运行面前置（`link_hfai_image.sh` 是否存在、`storage` 挂载种子、节点 `/data_local`、busybox 引用）** / 两个 `AttributeError` 复现 | `bash probe_images.sh [base_url]` | 复用本机 `~/.hfai/conf.yml` 的 token；节点探测需 `multipass` |
+| [probe_images.sh](probe_images.sh) | `images` **现状基线**探测（只读、幂等）：命令面 / 4 条接口 HTTP 码 / `train_image` 行数 / 运行面前置 / 两个 `AttributeError` 复现 | `bash probe_images.sh [base_url]` | 复用本机 `~/.hfai/conf.yml` 的 token；节点探测需 `multipass` |
+| [patch_image_override.py](patch_image_override.py) | 幂等写入运行时配置：`[cloud.storage.service].image_path` + `[image]` 全节（含 R-2 的 `containerd_socket` / `runtime_bin_dir` / `image_mount_root`） | `sudo python3 patch_image_override.py` | 否 |
+| [image_fixture.sh](image_fixture.sh) | 造测试用**自定义镜像**：在平台基础镜像上加 `/hfai_image_probe.txt`（内容可区分），tag 成 `registry/<group>/demo:v1` 并 `docker save` 到镜像共享根 | `bash image_fixture.sh [镜像名] [输出 tar]` | 否（用本机 docker 与当前部署镜像） |
+| [smoke_images.sh](smoke_images.sh) | **L2 接口冒烟**：API-15/16/17/18 正常/边界/幂等/错误码 + DB 副作用核对 + 运行面前置 | `bash smoke_images.sh http://10.205.52.200` | 复用 token；DB 校验需 `kubectl` |
+| [e2e_images.sh](e2e_images.sh) | **L3 端到端（AC-01）**：`images load` → `images list` → 用自定义镜像提交任务 → 日志出现镜像内探针 → initContainer 证据 → 删除后提交被拒 | `bash e2e_images.sh` | 同上；需已部署含本特性的镜像 |
 
-**现状期望（实施前）**：`/ugc/user/train_image/list` → 200 且 `user_images: []`；
-`load` / `update_status` / `delete` → **404**；`train_image` → **0 行**；
-`marsv2/scripts/link_hfai_image.sh` → **不存在**；节点 `/data_local` → **不存在**；
-`images load` / `images delete` → **`AttributeError`**。
-
-**已实测基线（2026-10-02，103）**：`PASS=4 FAIL=6`，失败项固定为
-① `link_hfai_image.sh` 不存在；② `one/hai-up.sh` 未登记挂载种子；
-③ 节点 `/data_local` 不存在；④ 节点无 `registry.high-flyer.cn/google_containers/busybox:latest`；
-⑤ `images load` 抛 `AttributeError`；⑥ `images delete` 抛 `AttributeError`。
-（前 4 项来自 §5 运行面前置，后 2 项来自 §6 客户端缺陷复现。）实施后重跑，期望 **FAIL=0**。
-
-**实施后期望（验收）**：`load` / `delete` / `update_status` → 200；`train_image` 的行出现在 `images list` 里；
-`link_hfai_image.sh` 存在且已被 `storage` 种子登记；节点前置满足；两个 `AttributeError` 消失。
+**现状基线（实施前，2026-10-02，103）**：`probe_images.sh` → `PASS=4 FAIL=6`（详见分析 §9）。
+**实施后期望**：`load` / `update_status` / `delete` → 200；`train_image` 的行出现在 `images list` 里；
+`link_hfai_image.sh` 存在且已被 `storage` 种子登记；节点前置满足；两个 `AttributeError` 消失；
+`smoke_images.sh` `FAIL=0`、`e2e_images.sh` `FAIL=0`。
 **端到端验收以 [用例 §5 E2E-01](../images/images-server-test-cases.md) 为准**——必须产出**可区分的任务输出**，
 只看接口 200 **不构成通过**（分析 §5 的教训：S6「逻辑可用但永不通过」）。
 

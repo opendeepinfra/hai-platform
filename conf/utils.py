@@ -491,7 +491,7 @@ def get_env_dir_name(name, suffix=0) -> str:
 
 DEFAULT_IMAGE_PATH = '/nfs_shared/image'
 # 镜像名白名单：name[:tag]；首字符字母数字，其余允许字母数字与 . _ -；**不允许 '/'**（HC-05 / SEC-03）
-IMAGE_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,127})?$')
+IMAGE_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$')
 
 
 def normalize_image_path(path) -> str:

@@ -16,7 +16,7 @@ NS="${NS:-hai-platform}"
 POD="${POD:-hai-platform-0}"
 DEST="${DEST:-/high-flyer/code/multi_gpu_runner_server}"
 LOG="${LOG:-/high-flyer/log/ugc_0.log}"
-PATHS="${PATHS:-api base_model client cloud_storage conf db db_schemas deploy docs exporter fetion k8s k8s_watcher logm marsv2 monitor one plugins roman_parliament scheduler server_model tests utils uvicorn_server.py launcher.py scheduler.py k8s_watcher.py requirements.txt idempotentize.py}"
+PATHS="${PATHS:-api base_model client cloud_storage conf db db_schemas deploy docs exporter fetion k8s k8s_watcher logm marsv2 monitor one plugins roman_parliament scheduler server_model tests utils uvicorn_server.py launcher.py scheduler.py k8s_watcher.py requirements.txt idempotentize.py image_metrics.py}"
 
 cd "${REPO}"
 echo "=== repo=${REPO} HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo '-')"

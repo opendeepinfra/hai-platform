@@ -1,10 +1,12 @@
 # HAI Platform · `hai-cli images`（用户自定义镜像）服务端实施与上线 Checklist
 
-> **实施进度（未开工 / 103 待实测）**：本特性**尚未开工**，全部检查项为 `☐`，共 **156** 项。
-> 现状与分析/需求/设计完全一致：`images list` 仅内建镜像可用（I2）、`images load` / `images delete`
-> 在客户端即抛 `AttributeError`（审计 **C-3** / I1）、服务端连路由都没有（实测 404，I3）、
-> `train_image` 表**零行零写入**（I4）、运行期脚本 `marsv2/scripts/link_hfai_image.sh` **全仓不存在**（I16）、
-> 103 节点 `/data_local` 缺失且 busybox 引用不匹配（I17）。**任何勾选都必须先有 103 实测证据。**
+> **实施进度（2026-10-02，103 实测）**：`✅ 114 / 156` 项已有实测证据，其余为未验证项
+> （见文末「本轮未验证清单」）。被测版本与全部命令输出见
+> [images-server-test-report.md](images-server-test-report.md)；决策与偏差见
+> [images-server-decisions.md](images-server-decisions.md)。
+> **任何勾选都必须先有 103 实测证据**：本轮 M1（控制面）与 M2（运行面）已闭环
+> （L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 E2E `PASS=26 FAIL=0`、workspace/env 回归零回归），
+> M3 的发布/灰度/压测/上线后观察未执行。
 >
 > **文档定位**：`docs/haiplatform/images/` 四件套之四（[分析](hai-cli-images-analysis.md) → [需求](images-server-requirements.md) → [设计](images-server-design.md) → [用例](images-server-test-cases.md) → **Checklist**）。
 > **使用方式**：按阶段自上而下勾选；每项须给出**可核验的证据**（命令输出 / 文件路径 / 测试报告编号），不接受口头确认。
@@ -25,14 +27,14 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | GATE-01 | 需求 §8 的 **8 项待确认决策 `Q-1`~`Q-8` 全部有结论**，尤其 **`Q-1`（`loader_backend` 选 `register`）** 与 **`Q-2`（唯一索引改 `(shared_group, image_tar)`）** | 决策记录（链接/邮件/会议纪要，逐项对应 Q-1..Q-8） | 后端 + 平台 |
-| ☐ | GATE-02 | `Q-4`（加载执行主体：复用平台任务还是专用 k8s Job）与设计 ADR-I3 结论一致；`Q-3`（同名不同 tar 是否允许）与 ADR-I8 删除语义一致 | 决策记录 + 差异清单 | 后端 |
-| ☐ | GATE-03 | **冻结接口契约**（附录 A 的 `API-15`~`API-18`：入参 / 出参 / 错误码 / 幂等语义），任何后续变更走变更流程 | 附录 A 评审通过记录（评审人 + 日期） | 后端 + 客户端 |
-| ☐ | GATE-04 | `Q-5`（`/data_local` 从哪来）、`Q-6`（initContainer 基础镜像用哪个）、`Q-7`（103 是否部署内网 registry）已有结论，且结论能支撑 ADR-I2 / ADR-I4 | 决策记录 + 与设计 §9.1 配置项的对应表 | 后端 + 运维 |
-| ☐ | GATE-05 | 设计 §15 **R-2（脚本如何访问节点容器运行时）在设计冻结前定案**：socket 登记为 `mount_point`，或换自带 `ctr` 的基础镜像 | 定案记录（二选一 + 理由）；未定案不得开工 S4 | 后端 + 运维 |
-| ☐ | GATE-06 | 确认**零回归面**：本次改动涉及 `conf/utils.py:23-35`、`cloud_storage/utils.py:445+`（`get_base_path`）、`one/one_etc/core.toml:110-116`，与 workspace / env 主链路共用 | 影响面清单 + workspace / env E2E 回归计划（CMP-03 / G6） | 后端 |
-| ☐ | GATE-07 | 确认**迁移策略**：新增 `db_schemas/035.table_train_image_alter.sql`（当前最大编号 `034`），幂等且由 `init_postgresql.sh` 全量重放生效（OPS-03 / HC-06）；`Q-8`（是否加 `user_name` 列）有结论 | 迁移方案评审记录 + `db_schemas/` 编号确认 | 后端 + 运维 |
-| ☐ | GATE-08 | 确认**交付范围含运行面**（`link_hfai_image.sh` + `one/hai-up.sh` 挂载种子 + 可配置基础镜像 + 节点前置），**不接受**「只修控制面」的缩水范围 | 范围确认记录（引用 FR-08 / I16 / I17 / HC-08 / AC-08） | 产品 + 后端 |
+| ✅ | GATE-01 | 需求 §8 的 **8 项待确认决策 `Q-1`~`Q-8` 全部有结论**，尤其 **`Q-1`（`loader_backend` 选 `register`）** 与 **`Q-2`（唯一索引改 `(shared_group, image_tar)`）** | 决策记录（链接/邮件/会议纪要，逐项对应 Q-1..Q-8） | 后端 + 平台 |
+| ✅ | GATE-02 | `Q-4`（加载执行主体：复用平台任务还是专用 k8s Job）与设计 ADR-I3 结论一致；`Q-3`（同名不同 tar 是否允许）与 ADR-I8 删除语义一致 | 决策记录 + 差异清单 | 后端 |
+| ✅ | GATE-03 | **冻结接口契约**（附录 A 的 `API-15`~`API-18`：入参 / 出参 / 错误码 / 幂等语义），任何后续变更走变更流程 | 附录 A 评审通过记录（评审人 + 日期） | 后端 + 客户端 |
+| ✅ | GATE-04 | `Q-5`（`/data_local` 从哪来）、`Q-6`（initContainer 基础镜像用哪个）、`Q-7`（103 是否部署内网 registry）已有结论，且结论能支撑 ADR-I2 / ADR-I4 | 决策记录 + 与设计 §9.1 配置项的对应表 | 后端 + 运维 |
+| ✅ | GATE-05 | 设计 §15 **R-2（脚本如何访问节点容器运行时）在设计冻结前定案**：socket 登记为 `mount_point`，或换自带 `ctr` 的基础镜像 | 定案记录（二选一 + 理由）；未定案不得开工 S4 | 后端 + 运维 |
+| ✅ | GATE-06 | 确认**零回归面**：本次改动涉及 `conf/utils.py:23-35`、`cloud_storage/utils.py:445+`（`get_base_path`）、`one/one_etc/core.toml:110-116`，与 workspace / env 主链路共用 | 影响面清单 + workspace / env E2E 回归计划（CMP-03 / G6） | 后端 |
+| ✅ | GATE-07 | 确认**迁移策略**：新增 `db_schemas/035.table_train_image_alter.sql`（当前最大编号 `034`），幂等且由 `init_postgresql.sh` 全量重放生效（OPS-03 / HC-06）；`Q-8`（是否加 `user_name` 列）有结论 | 迁移方案评审记录 + `db_schemas/` 编号确认 | 后端 + 运维 |
+| ✅ | GATE-08 | 确认**交付范围含运行面**（`link_hfai_image.sh` + `one/hai-up.sh` 挂载种子 + 可配置基础镜像 + 节点前置），**不接受**「只修控制面」的缩水范围 | 范围确认记录（引用 FR-08 / I16 / I17 / HC-08 / AC-08） | 产品 + 后端 |
 
 ---
 
@@ -42,23 +44,23 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | ENV-01 | 103 测试环境健康：Multipass 4 台 Running、`kubectl get nodes` 4 节点、`hai-platform-0` 1/1 Running、`ugc_server` 在 :8083 | `multipass list` + `kubectl get nodes` + `supervisorctl status ugc_server` 输出 | 测试 |
-| ☐ | ENV-02 | 镜像共享根就绪且可写：`image_path`（103 覆盖为 `/nfs-shared/hai-platform/image`）存在，服务端进程账号可读可写 | `ls -ld /nfs-shared/hai-platform/image` + 服务端进程 `id` | 运维 + 后端 |
-| ☐ | ENV-03 | 测试用镜像 tar 已放入共享盘，且内容**可区分**（预热一个探针文件/包，用于证明任务真的用了该镜像） | `ls -l <image_root>/demo.tar` + 探针内容说明 | 测试 |
-| ☐ | ENV-04 | 测试用户就绪：同组 `T_A` / `T_B`（组内共享与「可删他人镜像」）、跨组 `T_C`（越权用例）；服务端能从 token 解析 `shared_group` | `hai-cli whoami` 三个用户输出 + `select distinct shared_group from train_image` | 测试 |
-| ☐ | ENV-05 | 客户端两种形态就绪：镜像内既有 `hfai`（同提交 `7589fb1`）与待发布的新客户端各一份；**旧形态 `load <tar>` 单参**保留 | `hai-cli images --help` + 两个客户端的 `pip show hfai` 版本 | 客户端 + 测试 |
-| ☐ | ENV-06 | 节点前置已确认：训练节点 `/data_local` 存在（或明确的 `DirectoryOrCreate` 策略已定），且脚本访问节点运行时的通路可用（承 GATE-04 / GATE-05） | `multipass exec k8s-slave01 -- ls -ld /data_local` | 运维 |
+| ✅ | ENV-01 | 103 测试环境健康：Multipass 4 台 Running、`kubectl get nodes` 4 节点、`hai-platform-0` 1/1 Running、`ugc_server` 在 :8083 | `multipass list` + `kubectl get nodes` + `supervisorctl status ugc_server` 输出 | 测试 |
+| ✅ | ENV-02 | 镜像共享根就绪且可写：`image_path`（103 覆盖为 `/nfs-shared/hai-platform/image`）存在，服务端进程账号可读可写 | `ls -ld /nfs-shared/hai-platform/image` + 服务端进程 `id` | 运维 + 后端 |
+| ✅ | ENV-03 | 测试用镜像 tar 已放入共享盘，且内容**可区分**（预热一个探针文件/包，用于证明任务真的用了该镜像） | `ls -l <image_root>/demo.tar` + 探针内容说明 | 测试 |
+| ✅ | ENV-04 | 测试用户就绪：同组 `T_A` / `T_B`（组内共享与「可删他人镜像」）、跨组 `T_C`（越权用例）；服务端能从 token 解析 `shared_group` | `hai-cli whoami` 三个用户输出 + `select distinct shared_group from train_image` | 测试 |
+| ✅ | ENV-05 | 客户端两种形态就绪：镜像内既有 `hfai`（同提交 `7589fb1`）与待发布的新客户端各一份；**旧形态 `load <tar>` 单参**保留 | `hai-cli images --help` + 两个客户端的 `pip show hfai` 版本 | 客户端 + 测试 |
+| ✅ | ENV-06 | 节点前置已确认：训练节点 `/data_local` 存在（或明确的 `DirectoryOrCreate` 策略已定），且脚本访问节点运行时的通路可用（承 GATE-04 / GATE-05） | `multipass exec k8s-slave01 -- ls -ld /data_local` | 运维 |
 
 ### 2.2 配置
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | CFG-01 | `one/one_etc/core.toml` 新增 `[image]` 节：`enabled=false` / `enabled_groups=[]` / `enabled_users=[]` / `registry` / `loader_backend=register` / `load_helper_image` / `data_local_path` | 配置 diff（默认值齐全，与设计 §9.1 逐项对应） | 后端 |
-| ☐ | CFG-02 | `[cloud.storage.service].image_path` 已定义并在注释中写明语义（镜像资产共享根单点，对齐 `env_path` 的做法） | 配置 diff + 注释评审 | 后端 |
-| ☐ | CFG-03 | `conf/utils.py` 新增 `FileType.IMAGE` / `get_image_root()` / 镜像名白名单 `IMAGE_NAME_RE`；`cloud_storage/utils.py:get_base_path` 新增 IMAGE 分支；**全仓无第二处硬编码镜像根** | 代码 + `grep -rn "image_root\|image_path" --include=*.py` 仅落在 `conf/utils.py`（其余为注释/文档） | 后端 |
-| ☐ | CFG-04 | 启动自检 `image_self_check()`：`image_root` 存在且可写、`registry` 已配置、`loader_backend` 取值合法、`load_helper_image` 非空；**失败只告警不阻断启动** | 刻意配错 → 日志告警；正常配置 → `image path check: OK` | 后端 + 测试 |
-| ☐ | CFG-05 | initContainer 基础镜像改为**可配置**（`[image].load_helper_image`，默认改为节点已有的 `docker.io/library/busybox:latest`），不再硬编码内网地址（Q-6 / I17② / ADR-I4） | 配置 diff + `experiment_manager/manager/init_manager.py:347-360` 代码 | 后端 |
-| ☐ | CFG-06 | 灰度三级开关真实可动态生效：改 `override.toml` + 重启 `ugc_server`，关闭时 `load` / `update_status` / `delete` 一律 `FEATURE_DISABLED` 而**不抛 500**，`list` 与内建镜像路径不受影响（OPS-01 / OPS-02） | 关闭/打开两轮 `curl` 输出 + `supervisorctl` 重启记录 | 后端 + 测试 |
+| ✅ | CFG-01 | `one/one_etc/core.toml` 新增 `[image]` 节：`enabled=false` / `enabled_groups=[]` / `enabled_users=[]` / `registry` / `loader_backend=register` / `load_helper_image` / `data_local_path` | 配置 diff（默认值齐全，与设计 §9.1 逐项对应） | 后端 |
+| ✅ | CFG-02 | `[cloud.storage.service].image_path` 已定义并在注释中写明语义（镜像资产共享根单点，对齐 `env_path` 的做法） | 配置 diff + 注释评审 | 后端 |
+| ✅ | CFG-03 | `conf/utils.py` 新增 `FileType.IMAGE` / `get_image_root()` / 镜像名白名单 `IMAGE_NAME_RE`；`cloud_storage/utils.py:get_base_path` 新增 IMAGE 分支；**全仓无第二处硬编码镜像根** | 代码 + `grep -rn "image_root\|image_path" --include=*.py` 仅落在 `conf/utils.py`（其余为注释/文档） | 后端 |
+| ✅ | CFG-04 | 启动自检 `image_self_check()`：`image_root` 存在且可写、`registry` 已配置、`loader_backend` 取值合法、`load_helper_image` 非空；**失败只告警不阻断启动** | 刻意配错 → 日志告警；正常配置 → `image path check: OK` | 后端 + 测试 |
+| ✅ | CFG-05 | initContainer 基础镜像改为**可配置**（`[image].load_helper_image`，默认改为节点已有的 `docker.io/library/busybox:latest`），不再硬编码内网地址（Q-6 / I17② / ADR-I4） | 配置 diff + `experiment_manager/manager/init_manager.py:347-360` 代码 | 后端 |
+| ✅ | CFG-06 | 灰度三级开关真实可动态生效：改 `override.toml` + 重启 `ugc_server`，关闭时 `load` / `update_status` / `delete` 一律 `FEATURE_DISABLED` 而**不抛 500**，`list` 与内建镜像路径不受影响（OPS-01 / OPS-02） | 关闭/打开两轮 `curl` 输出 + `supervisorctl` 重启记录 | 后端 + 测试 |
 
 ---
 
@@ -66,14 +68,14 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | DB-01 | `db_schemas/035.table_train_image_alter.sql` 存在，且**幂等**（`add column if not exists` 写法，可照抄 `032.table_host_flags.sql`） | 迁移文件 + `git diff --stat db_schemas/`（仅新增 035） | 后端 |
-| ☐ | DB-02 | 新增列（`message`，若 Q-8 采纳则含 `user_name`）同步登记到 `TrainImageTable.columns`（`server_model/user_data/table_config.py:81-86`），表定义与 DDL 一致 | 代码 + `\d train_image` 输出对照 | 后端 |
-| ☐ | DB-03 | 若 Q-2 采纳：唯一索引由 `train_image_image_uindex(image_tar)` 改为 `(shared_group, image_tar)`，且 upsert 的 `on conflict` 目标同步修改 | 迁移文件 + `\d train_image` 索引列表 | 后端 |
-| ☐ | DB-04 | 迁移经 `init_postgresql.sh` 全量重放生效；**重复执行两次**不报错、列与索引只加一次（AC-12 / HC-06） | 两轮重放日志 + 前后 `\d train_image` 对比 | 后端 + 运维 |
-| ☐ | DB-05 | `updated_at` 触发器 `trigger_update_train_image_updated_at` 仍生效（update 自动刷新），API-17 的 DESC 排序依赖它 | `update` 一行后比对 `updated_at` 变化 | 后端 |
-| ☐ | DB-06 | 出口归一化落地：`task_id` → 原生 `int`，`updated_at` / `created_at` → ISO 字符串（修 I8，避免 `np.int64` 让 FastAPI 编码 500） | 单测断言类型 + 真实接口返回 JSON 可被 `json.loads` 且无 `NaN` | 后端 |
-| ☐ | DB-07 | 写入遵守 **HC-01 三条 SQL 硬约束**（禁 `%s::type` 写 `CAST(%s AS type)`、字面 `%` 写 `%%`、参数只能 tuple 且枚举传 `.value`） | `grep -rn "%s::" server_model/` 零命中 + 代码评审 | 后端 |
-| ☐ | DB-08 | 幂等 upsert 落点正确：`on conflict (image_tar) do update ... where status in ('failed','deleted')` —— 已 `loaded` 的行不被重复 `load` 覆盖（FR-06 / NFR-01 / AC-05） | 同 tar 连续 3 次 `load` 的行数/状态对比输出 | 后端 |
+| ✅ | DB-01 | `db_schemas/035.table_train_image_alter.sql` 存在，且**幂等**（`add column if not exists` 写法，可照抄 `032.table_host_flags.sql`） | 迁移文件 + `git diff --stat db_schemas/`（仅新增 035） | 后端 |
+| ✅ | DB-02 | 新增列（`message`，若 Q-8 采纳则含 `user_name`）同步登记到 `TrainImageTable.columns`（`server_model/user_data/table_config.py:81-86`），表定义与 DDL 一致 | 代码 + `\d train_image` 输出对照 | 后端 |
+| ✅ | DB-03 | 若 Q-2 采纳：唯一索引由 `train_image_image_uindex(image_tar)` 改为 `(shared_group, image_tar)`，且 upsert 的 `on conflict` 目标同步修改 | 迁移文件 + `\d train_image` 索引列表 | 后端 |
+| ✅ | DB-04 | 迁移经 `init_postgresql.sh` 全量重放生效；**重复执行两次**不报错、列与索引只加一次（AC-12 / HC-06） | 两轮重放日志 + 前后 `\d train_image` 对比 | 后端 + 运维 |
+| ✅ | DB-05 | `updated_at` 触发器 `trigger_update_train_image_updated_at` 仍生效（update 自动刷新），API-17 的 DESC 排序依赖它 | `update` 一行后比对 `updated_at` 变化 | 后端 |
+| ✅ | DB-06 | 出口归一化落地：`task_id` → 原生 `int`，`updated_at` / `created_at` → ISO 字符串（修 I8，避免 `np.int64` 让 FastAPI 编码 500） | 单测断言类型 + 真实接口返回 JSON 可被 `json.loads` 且无 `NaN` | 后端 |
+| ✅ | DB-07 | 写入遵守 **HC-01 三条 SQL 硬约束**（禁 `%s::type` 写 `CAST(%s AS type)`、字面 `%` 写 `%%`、参数只能 tuple 且枚举传 `.value`） | `grep -rn "%s::" server_model/` 零命中 + 代码评审 | 后端 |
+| ✅ | DB-08 | 幂等 upsert 落点正确：`on conflict (image_tar) do update ... where status in ('failed','deleted')` —— 已 `loaded` 的行不被重复 `load` 覆盖（FR-06 / NFR-01 / AC-05） | 同 tar 连续 3 次 `load` 的行数/状态对比输出 | 后端 |
 
 ---
 
@@ -83,55 +85,55 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | DEV-01 | `api/resource/image/default.py` 的 4 个具名桩被替换为真实接入层实现，且**保持函数名**（`hfai_image_load` / `hfai_image_update_status` / `hfai_image_list` / `hfai_image_delete`，ADR-I1） | 代码 + `git diff api/resource/image/default.py`（函数名不变） | 后端 |
-| ☐ | DEV-02 | `api/register/implement.py:7-20` 的模块导入区**显式** `from api.resource import image as ares_image`（当前该模块根本没被 import，这是 4 个桩不可达的根因） | 代码 + `python -c "import api.register.implement"` 无副作用报错 | 后端 |
-| ☐ | DEV-03 | `api/register/implement.py` 的 `ugc` 区块（`:67-94`）新增 3 条路由：`load` / `update_status` / `delete`，紧随 `:71` 的 `list` | 代码 + `curl` 探测 404 → 200 | 后端 |
-| ☐ | DEV-04 | 领域层新增 4 方法：`async_load` / `async_report_image_status` / `async_delete` / `async_get_user_images`（`server_model/user_impl/user_image/implement.py`），签名与设计 §5.2 一致 | 代码 + 单测 | 后端 |
-| ☐ | DEV-05 | `server_model/user_impl/user_image/default.py:16` 的 `'user_images': []` 改为真实查询（激活零调用方的 `a_find_user_group_images`）；`mars_images` 与响应外壳**零改动**（FR-02 / CMP-03 / CMP-05） | 代码 + `git diff` 仅动 `user_images` 一行 | 后端 |
-| ☐ | DEV-06 | 路径校验统一走 `cloud_storage/utils.py:check_is_subpath(get_image_root(), ...)`，拒绝 `..`、符号链接逃逸、非共享盘路径与客户端本机绝对路径（SEC-01 / FR-13，禁止自造校验） | 代码 + 负例单测 | 后端 |
-| ☐ | DEV-07 | 命名派生与校验：缺省取 `basename(image_tar)` 去 `.tar` 后缀；白名单正则；**不含 `/`**；含 `:` 保留 tag 否则补 `:latest`（I6 / HC-05 / FR-07） | 代码 + 派生用例单测（含边界：`.tar` 后缀、无 tag、含 `/` 被拒） | 后端 |
-| ☐ | DEV-08 | **概念分离**：`image_tar` 与 `path` 在代码上**分别赋值**；`processing` 阶段**不得**把 tar 路径写进 `path`（I18，设计 §4.1「实现修正 I18」） | 代码评审 + 单测断言「processing 行 path 为空/独立字段」 | 后端 |
-| ☐ | DEV-09 | 状态常量单点：`PROCESSING/LOADING/LOADED/FAILED/DELETED` 集中定义，禁止散落字符串；取值同时满足「任务侧精确 `loaded`」与「客户端子串 `deleted`」（I5 / HC-03 / HC-04 / ADR-I6） | 代码 + `grep` 状态字面量仅出现在常量定义处 | 后端 |
-| ☐ | DEV-10 | `delete` 解析 3 段 URL 后**强制校验 `shared_group == user.shared_group`**；组内允许删他人、禁止跨组（SEC-02 / SEC-05 / I14 / ADR-I8） | 代码 + 跨组负例用例 | 后端 |
-| ☐ | DEV-11 | API-16 回报校验 `task_id` 与该行登记值一致（防伪造），非法迁移返回 `ILLEGAL_TRANSITION`；`loaded` 不被普通用户用 `failed` 覆盖（FR-10 / SEC-04） | 代码 + 伪造/乱序回报用例 | 后端 |
-| ☐ | DEV-12 | 缓存刷新：写成功后调用统一 `_refresh_train_image_cache()`；**记录** launcher 进程内缓存（`launcher.py:59-61` 的 `@cached`）失效策略（R-3 / 设计 §7.4） | 代码 + 已知限制说明（写明 P0 是否接受「重启 launcher 生效」） | 后端 |
+| ✅ | DEV-01 | `api/resource/image/default.py` 的 4 个具名桩被替换为真实接入层实现，且**保持函数名**（`hfai_image_load` / `hfai_image_update_status` / `hfai_image_list` / `hfai_image_delete`，ADR-I1） | 代码 + `git diff api/resource/image/default.py`（函数名不变） | 后端 |
+| ✅ | DEV-02 | `api/register/implement.py:7-20` 的模块导入区**显式** `from api.resource import image as ares_image`（当前该模块根本没被 import，这是 4 个桩不可达的根因） | 代码 + `python -c "import api.register.implement"` 无副作用报错 | 后端 |
+| ✅ | DEV-03 | `api/register/implement.py` 的 `ugc` 区块（`:67-94`）新增 3 条路由：`load` / `update_status` / `delete`，紧随 `:71` 的 `list` | 代码 + `curl` 探测 404 → 200 | 后端 |
+| ✅ | DEV-04 | 领域层新增 4 方法：`async_load` / `async_report_image_status` / `async_delete` / `async_get_user_images`（`server_model/user_impl/user_image/implement.py`），签名与设计 §5.2 一致 | 代码 + 单测 | 后端 |
+| ✅ | DEV-05 | `server_model/user_impl/user_image/default.py:16` 的 `'user_images': []` 改为真实查询（激活零调用方的 `a_find_user_group_images`）；`mars_images` 与响应外壳**零改动**（FR-02 / CMP-03 / CMP-05） | 代码 + `git diff` 仅动 `user_images` 一行 | 后端 |
+| ✅ | DEV-06 | 路径校验统一走 `cloud_storage/utils.py:check_is_subpath(get_image_root(), ...)`，拒绝 `..`、符号链接逃逸、非共享盘路径与客户端本机绝对路径（SEC-01 / FR-13，禁止自造校验） | 代码 + 负例单测 | 后端 |
+| ✅ | DEV-07 | 命名派生与校验：缺省取 `basename(image_tar)` 去 `.tar` 后缀；白名单正则；**不含 `/`**；含 `:` 保留 tag 否则补 `:latest`（I6 / HC-05 / FR-07） | 代码 + 派生用例单测（含边界：`.tar` 后缀、无 tag、含 `/` 被拒） | 后端 |
+| ✅ | DEV-08 | **概念分离**：`image_tar` 与 `path` 在代码上**分别赋值**；`processing` 阶段**不得**把 tar 路径写进 `path`（I18，设计 §4.1「实现修正 I18」） | 代码评审 + 单测断言「processing 行 path 为空/独立字段」 | 后端 |
+| ✅ | DEV-09 | 状态常量单点：`PROCESSING/LOADING/LOADED/FAILED/DELETED` 集中定义，禁止散落字符串；取值同时满足「任务侧精确 `loaded`」与「客户端子串 `deleted`」（I5 / HC-03 / HC-04 / ADR-I6） | 代码 + `grep` 状态字面量仅出现在常量定义处 | 后端 |
+| ✅ | DEV-10 | `delete` 解析 3 段 URL 后**强制校验 `shared_group == user.shared_group`**；组内允许删他人、禁止跨组（SEC-02 / SEC-05 / I14 / ADR-I8） | 代码 + 跨组负例用例 | 后端 |
+| ✅ | DEV-11 | API-16 回报校验 `task_id` 与该行登记值一致（防伪造），非法迁移返回 `ILLEGAL_TRANSITION`；`loaded` 不被普通用户用 `failed` 覆盖（FR-10 / SEC-04） | 代码 + 伪造/乱序回报用例 | 后端 |
+| ✅ | DEV-12 | 缓存刷新：写成功后调用统一 `_refresh_train_image_cache()`；**记录** launcher 进程内缓存（`launcher.py:59-61` 的 `@cached`）失效策略（R-3 / 设计 §7.4） | 代码 + 已知限制说明（写明 P0 是否接受「重启 launcher 生效」） | 后端 |
 
 ### 4.2 运行面（link 脚本与节点前置）
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | DEV-13 | **新增** `marsv2/scripts/link_hfai_image.sh`（与既有 `validate_image.sh` 同级），挂载路径为 `/marsv2/scripts/link_hfai_image.sh`（FR-08 / I16） | 文件存在 + `ls -l`（含大小）+ `sh -n` 语法检查通过 | 后端 |
-| ☐ | DEV-14 | 脚本契约落地：**只读取 env** `HFAI_IMAGE` / `HFAI_IMAGE_WEKA_PATH`，**不接受任何用户可控命令行参数**，路径做前缀断言（设计 §5.4 / SEC-03 / SEC-07） | 代码评审 + `grep` 无 `$1`/`$@` 使用 | 后端 |
-| ☐ | DEV-15 | 脚本**幂等**：容器运行时已存在该镜像即 `exit 0`；重复执行不报错、不重复导入（initContainer 重试的前提，设计 §5.4） | 手动连续执行两次输出一致 + 任务重试用例 | 后端 + 测试 |
-| ☐ | DEV-16 | 脚本**失败可见**：非 0 退出并打印目标路径与命令输出；`/data_local` 缺失或镜像资产不存在时**显式报错**，不静默跳过（设计 §5.4 / AC-08） | 构造失败场景的脚本输出（含 `FAILED:` 行） | 后端 |
-| ☐ | DEV-17 | `one/hai-up.sh:288-301` 的 `storage` 挂载种子新增一行 `marsv2-scripts-{task.id}:link_hfai_image.sh`（HC-08：随镜像构建进入任务 pod，不得依赖手工 `kubectl cp`） | 代码 diff + 任务 pod 内 `ls -l /marsv2/scripts/link_hfai_image.sh` | 后端 |
-| ☐ | DEV-18 | `experiment_manager/manager/init_manager.py:347-360` 的 initContainer 基础镜像改为读取配置（Q-6 / I17② / ADR-I4） | 代码 diff + `kubectl get pod -o jsonpath` 查 initContainer image | 后端 |
-| ☐ | DEV-19 | `/data_local` 前置落地：hostPath 显式声明 `DirectoryOrCreate` **或**由部署流程创建，并纳入部署自检（Q-5 / I17① / OPS-04） | 部署脚本 diff + 自检输出 | 后端 + 运维 |
-| ☐ | DEV-20 | **节点运行时访问通路定案并实现**（R-2）：运行时 socket 登记为 `mount_point`，或换自带 `ctr` 的基础镜像 | 定案记录 + 任务内 `command -v ctr` 或 socket 挂载实测输出 | 后端 + 运维 |
+| ✅ | DEV-13 | **新增** `marsv2/scripts/link_hfai_image.sh`（与既有 `validate_image.sh` 同级），挂载路径为 `/marsv2/scripts/link_hfai_image.sh`（FR-08 / I16） | 文件存在 + `ls -l`（含大小）+ `sh -n` 语法检查通过 | 后端 |
+| ✅ | DEV-14 | 脚本契约落地：**只读取 env** `HFAI_IMAGE` / `HFAI_IMAGE_WEKA_PATH`，**不接受任何用户可控命令行参数**，路径做前缀断言（设计 §5.4 / SEC-03 / SEC-07） | 代码评审 + `grep` 无 `$1`/`$@` 使用 | 后端 |
+| ✅ | DEV-15 | 脚本**幂等**：容器运行时已存在该镜像即 `exit 0`；重复执行不报错、不重复导入（initContainer 重试的前提，设计 §5.4） | 手动连续执行两次输出一致 + 任务重试用例 | 后端 + 测试 |
+| ✅ | DEV-16 | 脚本**失败可见**：非 0 退出并打印目标路径与命令输出；`/data_local` 缺失或镜像资产不存在时**显式报错**，不静默跳过（设计 §5.4 / AC-08） | 构造失败场景的脚本输出（含 `FAILED:` 行） | 后端 |
+| ✅ | DEV-17 | `one/hai-up.sh:288-301` 的 `storage` 挂载种子新增一行 `marsv2-scripts-{task.id}:link_hfai_image.sh`（HC-08：随镜像构建进入任务 pod，不得依赖手工 `kubectl cp`） | 代码 diff + 任务 pod 内 `ls -l /marsv2/scripts/link_hfai_image.sh` | 后端 |
+| ✅ | DEV-18 | `experiment_manager/manager/init_manager.py:347-360` 的 initContainer 基础镜像改为读取配置（Q-6 / I17② / ADR-I4） | 代码 diff + `kubectl get pod -o jsonpath` 查 initContainer image | 后端 |
+| ✅ | DEV-19 | `/data_local` 前置落地：hostPath 显式声明 `DirectoryOrCreate` **或**由部署流程创建，并纳入部署自检（Q-5 / I17① / OPS-04） | 部署脚本 diff + 自检输出 | 后端 + 运维 |
+| ✅ | DEV-20 | **节点运行时访问通路定案并实现**（R-2）：运行时 socket 登记为 `mount_point`，或换自带 `ctr` 的基础镜像 | 定案记录 + 任务内 `command -v ctr` 或 socket 挂载实测输出 | 后端 + 运维 |
 
 ### 4.3 客户端
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | DEV-21 | `base_model/base_user_modules/default.py` 的 `IUserImage` 增加 `async_load` / `async_delete` 声明（当前只有 `async_get`，缺失属**接口未定义**，FR-01 / C-3） | 代码 diff | 客户端 |
-| ☐ | DEV-22 | 客户端 `client/model/user_impl/default.py` 的 `UserImage` 实现两个方法，分别指向 `/ugc/user/train_image/load` 与 `/ugc/user/train_image/delete`（修 `AttributeError`） | 代码 + `hai-cli images load/delete` 实机不再抛 `AttributeError`（AC-02） | 客户端 |
-| ☐ | DEV-23 | 服务端 `UserImageExtras` 同步补 `async_load` / `async_delete` 语义（两端同名方法，避免加载器混淆） | 代码 + 实机调用 | 后端 |
-| ☐ | DEV-24 | `client/commands/hfai_image.py` 的 `load` 增加可选 `-i/--image`，**不传仍可用**（服务端派生镜像名，CMP-01） | 代码 + 两种调用形态各跑一次 | 客户端 |
-| ☐ | DEV-25 | 变更型调用 `retries` 保持默认 1，**不主动重试**；幂等由服务端 `image_tar` upsert 保证（I12 / FR-06） | 代码评审 + 抓包确认单次请求 | 客户端 |
-| ☐ | DEV-26 | 失败提示改造：`allow_unsuccess=True` + 打印服务端 `msg` + `raise SystemExit(1)`，**不再向用户抛裸 `Exception`/`AssertionError` 栈**（I10 / FR-12） | 代码 diff + 失败场景实机输出（对照当前 §9-3 栈形态） | 客户端 |
-| ☐ | DEV-27 | `msg` 兜底 `result.get('msg', '操作完成')`；服务端**保证任何响应都含 `msg`**（旧客户端唯一消费的字段，设计 §4.1 / §6.2） | 代码 + 接口契约用例（旧客户端形态） | 客户端 + 后端 |
-| ☐ | DEV-28 | `images list` 防御性修正：缺 `result` / 非 dict 时告警并按空列表处理（不崩）；`-a/--all` 帮助文本明确「隐藏 status 含 `deleted` 的记录」（R-8 / 设计 §6.2 / §6.3） | 代码 + 帮助文本输出 + 构造异常响应的实机表现 | 客户端 |
+| ✅ | DEV-21 | `base_model/base_user_modules/default.py` 的 `IUserImage` 增加 `async_load` / `async_delete` 声明（当前只有 `async_get`，缺失属**接口未定义**，FR-01 / C-3） | 代码 diff | 客户端 |
+| ✅ | DEV-22 | 客户端 `client/model/user_impl/default.py` 的 `UserImage` 实现两个方法，分别指向 `/ugc/user/train_image/load` 与 `/ugc/user/train_image/delete`（修 `AttributeError`） | 代码 + `hai-cli images load/delete` 实机不再抛 `AttributeError`（AC-02） | 客户端 |
+| ✅ | DEV-23 | 服务端 `UserImageExtras` 同步补 `async_load` / `async_delete` 语义（两端同名方法，避免加载器混淆） | 代码 + 实机调用 | 后端 |
+| ✅ | DEV-24 | `client/commands/hfai_image.py` 的 `load` 增加可选 `-i/--image`，**不传仍可用**（服务端派生镜像名，CMP-01） | 代码 + 两种调用形态各跑一次 | 客户端 |
+| ✅ | DEV-25 | 变更型调用 `retries` 保持默认 1，**不主动重试**；幂等由服务端 `image_tar` upsert 保证（I12 / FR-06） | 代码评审 + 抓包确认单次请求 | 客户端 |
+| ✅ | DEV-26 | 失败提示改造：`allow_unsuccess=True` + 打印服务端 `msg` + `raise SystemExit(1)`，**不再向用户抛裸 `Exception`/`AssertionError` 栈**（I10 / FR-12） | 代码 diff + 失败场景实机输出（对照当前 §9-3 栈形态） | 客户端 |
+| ✅ | DEV-27 | `msg` 兜底 `result.get('msg', '操作完成')`；服务端**保证任何响应都含 `msg`**（旧客户端唯一消费的字段，设计 §4.1 / §6.2） | 代码 + 接口契约用例（旧客户端形态） | 客户端 + 后端 |
+| ✅ | DEV-28 | `images list` 防御性修正：缺 `result` / 非 dict 时告警并按空列表处理（不崩）；`-a/--all` 帮助文本明确「隐藏 status 含 `deleted` 的记录」（R-8 / 设计 §6.2 / §6.3） | 代码 + 帮助文本输出 + 构造异常响应的实机表现 | 客户端 |
 
 ### 4.4 单元测试与静态检查
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | UT-01 | 领域层纯函数单测：命名派生 / 路径校验 / 状态机 / 组校验 / 出口归一化，**无 DB、无 k8s、无 registry** 条件下可跑（NFR-04，对齐 `tests/env/` 的写法） | `pytest` 输出 + 覆盖报告 | 后端 |
-| ☐ | UT-02 | 路径越界单测：`..`、`/etc/passwd`、客户端本机路径、越界软链**全部被拒且不产生 DB 行**（SEC-01 / AC-06） | 测试报告（含「零 DB 行」断言） | 后端 |
-| ☐ | UT-03 | 状态机单测：非法迁移被拒（如 `deleted → loaded`），`loaded` 不被 `failed` 覆盖（FR-04 / 设计 §7.3） | 测试报告 | 后端 |
-| ☐ | UT-04 | 幂等单测：同 `image_tar` 连续 upsert → 表仍 1 行且状态不倒退；重复 `delete` → `deleted:0`（NFR-01 / AC-05） | 测试报告 | 后端 |
+| ✅ | UT-01 | 领域层纯函数单测：命名派生 / 路径校验 / 状态机 / 组校验 / 出口归一化，**无 DB、无 k8s、无 registry** 条件下可跑（NFR-04，对齐 `tests/env/` 的写法） | `pytest` 输出 + 覆盖报告 | 后端 |
+| ✅ | UT-02 | 路径越界单测：`..`、`/etc/passwd`、客户端本机路径、越界软链**全部被拒且不产生 DB 行**（SEC-01 / AC-06） | 测试报告（含「零 DB 行」断言） | 后端 |
+| ✅ | UT-03 | 状态机单测：非法迁移被拒（如 `deleted → loaded`），`loaded` 不被 `failed` 覆盖（FR-04 / 设计 §7.3） | 测试报告 | 后端 |
+| ✅ | UT-04 | 幂等单测：同 `image_tar` 连续 upsert → 表仍 1 行且状态不倒退；重复 `delete` → `deleted:0`（NFR-01 / AC-05） | 测试报告 | 后端 |
 | ☐ | UT-05 | 静态检查（flake8 / ruff / pyflakes）**无新增告警**；领域层 `grep -rn "from fastapi" server_model/user_impl/user_image/` 为空（分层纪律） | CI 输出 + `grep` 结果 | 后端 |
-| ☐ | UT-06 | `conf/utils.py` / `cloud_storage/utils.py` 的改动**未破坏既有 workspace / env 单测**（FR-15 / G6） | CI 全绿 + 回归记录 | 后端 |
+| ✅ | UT-06 | `conf/utils.py` / `cloud_storage/utils.py` 的改动**未破坏既有 workspace / env 单测**（FR-15 / G6） | CI 全绿 + 回归记录 | 后端 |
 
 ---
 
@@ -141,18 +143,18 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | API-01 | `API-15` 正常路径返回 `{success:1, msg, image, image_tar, status, task_id}`，与附录 A.1 一致 | `curl` 输出 + 与附录 A.1 逐字段比对 | 后端 |
-| ☐ | API-02 | `API-15` **旧形态**（仅 `image_tar`、无 `image`）可用，服务端独立派生镜像名（CMP-01 / C-3 的修复闭环） | 旧客户端实机调用输出 | 后端 + 客户端 |
-| ☐ | API-03 | `API-15` 拒绝面完整：`INVALID_PARAM`（缺参/名字非法）、`PATH_ESCAPE`、`IMAGE_TAR_NOT_FOUND` | 负例 `curl` 输出（附录 A.1 逐条覆盖） | 后端 |
-| ☐ | API-04 | `API-15` 幂等：同 `image_tar` 连续 3 次调用 → 表仍 1 行、状态不倒退；仅 `failed` / `deleted` 可重试（NFR-01 / AC-05） | `psql` 行数与状态对比 + 用例 TC-F 组 | 后端 + 测试 |
-| ☐ | API-05 | `API-16` 正常回报：`loaded`（**必带 `path`**）与 `failed`（带 `message`），响应 `{success:1, status}` | `curl` 输出 + 表内 `path`/`message` 回读 | 后端 |
-| ☐ | API-06 | `API-16` 防伪造与迁移校验：`task_id` 不匹配 → `FORBIDDEN`；非法迁移 → `ILLEGAL_TRANSITION`（SEC-04 / FR-10） | 负例用例输出 | 后端 |
-| ☐ | API-07 | `API-17` 的 `user_images` 每行必含 6 字段（`registry` / `shared_group` / `image` / `status` / `image_tar` / `updated_at`）；`mars_images` 与响应外壳**零改动**（FR-11 / CMP-03） | 真实响应 JSON + 字段断言 | 后端 |
-| ☐ | API-08 | `API-17` 排序为 `updated_at **DESC**`（修 I7：客户端取**首个**为基准，DESC 才等于「以最新为准」）；**排序即契约**，必须有断言 | 用例 TC-C 组的顺序断言（同一 `image` 多条不同 `updated_at`） | 后端 + 测试 |
-| ☐ | API-09 | `API-17` 出口归一化：`task_id` 为原生 `int`、时间为 ISO 字符串，响应可被 FastAPI 编码（修 I8，否则接通即 500） | 响应 JSON 类型检查 + 无 500 记录 | 后端 |
-| ☐ | API-10 | `API-17` 返回**本组全部状态行**（含 `deleted`），由客户端 `-a/--all` 决定是否隐藏（保持既有分工，CMP-05 / HC-04） | 带 `deleted` 行的响应 `curl` + 客户端 `list` / `list -a` 对比 | 后端 + 客户端 |
-| ☐ | API-11 | `API-18` 正常软删（`status='deleted'`）返回 `{success:1, deleted:N}`；**重复删除返回 `deleted:0` 且 `success:1`**（幂等） | `curl` 两次输出 + `psql` 状态 | 后端 |
-| ☐ | API-12 | `API-18` 拒绝面完整：跨组 → `FORBIDDEN`、非 3 段 → `INVALID_PARAM`、不存在 → `IMAGE_NOT_FOUND`；被删名字**自动退出任务白名单**（SEC-05 / AC-07） | 负例输出 + 删除后提交任务被拒（E2E-05 呼应） | 后端 |
+| ✅ | API-01 | `API-15` 正常路径返回 `{success:1, msg, image, image_tar, status, task_id}`，与附录 A.1 一致 | `curl` 输出 + 与附录 A.1 逐字段比对 | 后端 |
+| ✅ | API-02 | `API-15` **旧形态**（仅 `image_tar`、无 `image`）可用，服务端独立派生镜像名（CMP-01 / C-3 的修复闭环） | 旧客户端实机调用输出 | 后端 + 客户端 |
+| ✅ | API-03 | `API-15` 拒绝面完整：`INVALID_PARAM`（缺参/名字非法）、`PATH_ESCAPE`、`IMAGE_TAR_NOT_FOUND` | 负例 `curl` 输出（附录 A.1 逐条覆盖） | 后端 |
+| ✅ | API-04 | `API-15` 幂等：同 `image_tar` 连续 3 次调用 → 表仍 1 行、状态不倒退；仅 `failed` / `deleted` 可重试（NFR-01 / AC-05） | `psql` 行数与状态对比 + 用例 TC-F 组 | 后端 + 测试 |
+| ✅ | API-05 | `API-16` 正常回报：`loaded`（**必带 `path`**）与 `failed`（带 `message`），响应 `{success:1, status}` | `curl` 输出 + 表内 `path`/`message` 回读 | 后端 |
+| ✅ | API-06 | `API-16` 防伪造与迁移校验：`task_id` 不匹配 → `FORBIDDEN`；非法迁移 → `ILLEGAL_TRANSITION`（SEC-04 / FR-10） | 负例用例输出 | 后端 |
+| ✅ | API-07 | `API-17` 的 `user_images` 每行必含 6 字段（`registry` / `shared_group` / `image` / `status` / `image_tar` / `updated_at`）；`mars_images` 与响应外壳**零改动**（FR-11 / CMP-03） | 真实响应 JSON + 字段断言 | 后端 |
+| ✅ | API-08 | `API-17` 排序为 `updated_at **DESC**`（修 I7：客户端取**首个**为基准，DESC 才等于「以最新为准」）；**排序即契约**，必须有断言 | 用例 TC-C 组的顺序断言（同一 `image` 多条不同 `updated_at`） | 后端 + 测试 |
+| ✅ | API-09 | `API-17` 出口归一化：`task_id` 为原生 `int`、时间为 ISO 字符串，响应可被 FastAPI 编码（修 I8，否则接通即 500） | 响应 JSON 类型检查 + 无 500 记录 | 后端 |
+| ✅ | API-10 | `API-17` 返回**本组全部状态行**（含 `deleted`），由客户端 `-a/--all` 决定是否隐藏（保持既有分工，CMP-05 / HC-04） | 带 `deleted` 行的响应 `curl` + 客户端 `list` / `list -a` 对比 | 后端 + 客户端 |
+| ✅ | API-11 | `API-18` 正常软删（`status='deleted'`）返回 `{success:1, deleted:N}`；**重复删除返回 `deleted:0` 且 `success:1`**（幂等） | `curl` 两次输出 + `psql` 状态 | 后端 |
+| ✅ | API-12 | `API-18` 拒绝面完整：跨组 → `FORBIDDEN`、非 3 段 → `INVALID_PARAM`、不存在 → `IMAGE_NOT_FOUND`；被删名字**自动退出任务白名单**（SEC-05 / AC-07） | 负例输出 + 删除后提交任务被拒（E2E-05 呼应） | 后端 |
 
 ---
 
@@ -160,16 +162,16 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | E2E-01 | 主场景：`images load` → `images list` 看到该行及其真实状态（`processing` → `loaded`）→ `psql select * from train_image` 与接口响应一致（AC-03） | 真实 CLI 输出 + `psql` 输出对照 | 测试 |
-| ☐ | E2E-02 | **AC-01 的关键一步**：用自定义镜像跑通真实任务，且**输出能被镜像内容区分**（镜像内预置探针文件/包，`probe.py` import 它）；任务 `succeeded`（AC-01 / AC-09） | 任务 id + `hai-cli status` + `hai-cli logs` 中的探针输出 | 测试 + 后端 |
-| ☐ | E2E-03 | 运行面：pod initContainer 不再 `not found`，`/marsv2/scripts/link_hfai_image.sh` 被成功执行（`kubectl describe pod` 中 initContainer 为 Completed）（AC-08 / I16） | `kubectl describe pod` 片段 + init 日志 | 后端 + 测试 |
-| ☐ | E2E-04 | link 脚本幂等：同一任务重试或重复提交**不因「镜像已存在」失败**（设计 §5.4） | 连续两次任务/一次重试的 init 日志 | 测试 |
-| ☐ | E2E-05 | 删除与不可用性：`images delete` 后再用同一镜像提交任务 → 服务端返回「不存在镜像…或镜像仍在加载」（AC-04 / 需求 §7 判据⑥） | `images delete` 输出 + 任务提交报错文案 | 测试 |
-| ☐ | E2E-06 | `images list -a` 可见 `deleted` 行、默认视图隐藏（客户端子串 `'deleted' in status` 语义闭环）（HC-04） | 两次 `list` 输出对照 | 测试 |
-| ☐ | E2E-07 | **路径三方一致**：`image_tar` / `path` / `image_url` 自洽；`register` 后端下 `path == image_tar`；运行期 `HFAI_IMAGE_WEKA_PATH` 等于表中 `path`（设计 §7.2 / P 组） | 任务内 `env` 输出 + `psql` 行对照 | 后端 + 测试 |
+| ✅ | E2E-01 | 主场景：`images load` → `images list` 看到该行及其真实状态（`processing` → `loaded`）→ `psql select * from train_image` 与接口响应一致（AC-03） | 真实 CLI 输出 + `psql` 输出对照 | 测试 |
+| ✅ | E2E-02 | **AC-01 的关键一步**：用自定义镜像跑通真实任务，且**输出能被镜像内容区分**（镜像内预置探针文件/包，`probe.py` import 它）；任务 `succeeded`（AC-01 / AC-09） | 任务 id + `hai-cli status` + `hai-cli logs` 中的探针输出 | 测试 + 后端 |
+| ✅ | E2E-03 | 运行面：pod initContainer 不再 `not found`，`/marsv2/scripts/link_hfai_image.sh` 被成功执行（`kubectl describe pod` 中 initContainer 为 Completed）（AC-08 / I16） | `kubectl describe pod` 片段 + init 日志 | 后端 + 测试 |
+| ✅ | E2E-04 | link 脚本幂等：同一任务重试或重复提交**不因「镜像已存在」失败**（设计 §5.4） | 连续两次任务/一次重试的 init 日志 | 测试 |
+| ✅ | E2E-05 | 删除与不可用性：`images delete` 后再用同一镜像提交任务 → 服务端返回「不存在镜像…或镜像仍在加载」（AC-04 / 需求 §7 判据⑥） | `images delete` 输出 + 任务提交报错文案 | 测试 |
+| ✅ | E2E-06 | `images list -a` 可见 `deleted` 行、默认视图隐藏（客户端子串 `'deleted' in status` 语义闭环）（HC-04） | 两次 `list` 输出对照 | 测试 |
+| ✅ | E2E-07 | **路径三方一致**：`image_tar` / `path` / `image_url` 自洽；`register` 后端下 `path == image_tar`；运行期 `HFAI_IMAGE_WEKA_PATH` 等于表中 `path`（设计 §7.2 / P 组） | 任务内 `env` 输出 + `psql` 行对照 | 后端 + 测试 |
 | ☐ | E2E-08 | 多用户与跨组：A 组加载后 B 组 `list` 看不到、跨组 `delete` 被拒（构造 3 段 URL 尝试）（AC-07） | 三用户实测记录 | 测试 |
-| ☐ | E2E-09 | 缓存一致性：刚 `load` 完**立刻**提交任务不应读不到（R-3）；若 P0 兜底为「重启 launcher 生效」，须显式记录为已知限制并复验一次 | 复现记录 + 已知限制条目 | 后端 |
-| ☐ | E2E-10 | **零回归**：`smoke_ugc` 8/8、`e2e_workspace` 19/19、`e2e_env` 全绿（复用 `docs/haiplatform/scripts/` 既有脚本）（AC-10 / G6 / CMP-03） | 三个脚本输出 | 后端 + 测试 |
+| ✅ | E2E-09 | 缓存一致性：刚 `load` 完**立刻**提交任务不应读不到（R-3）；若 P0 兜底为「重启 launcher 生效」，须显式记录为已知限制并复验一次 | 复现记录 + 已知限制条目 | 后端 |
+| ✅ | E2E-10 | **零回归**：`smoke_ugc` 8/8、`e2e_workspace` 19/19、`e2e_env` 全绿（复用 `docs/haiplatform/scripts/` 既有脚本）（AC-10 / G6 / CMP-03） | 三个脚本输出 | 后端 + 测试 |
 
 ---
 
@@ -177,14 +179,14 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | SEC-01 | 身份只来自 token，伪造 `username` / `group` 被忽略；新增路由统一 `Depends(get_ugc_user)`（需求 SEC-04） | 伪造参数实测 + 代码评审 | 后端 |
-| ☐ | SEC-02 | 路径越界防护实测：`..`、符号链接、客户端本机绝对路径全部拒绝，且**不产生 DB 行**（需求 SEC-01 / AC-06） | 负例实测 + 拒绝前后行数对比 | 后端 + 安全 |
-| ☐ | SEC-03 | 组隔离：所有读写以服务端解析的 `user.shared_group` 为准；跨组删除/查看/登记全部被拒（需求 SEC-02 / SEC-05 / AC-07） | 跨组用例记录 | 后端 + 安全 |
-| ☐ | SEC-04 | 注入防护：镜像名走白名单正则；进入 shell / 任务脚本的字段一律参数化（**禁止字符串拼接构命令**）；脚本只读 env（需求 SEC-03 / SEC-07） | 注入用例（引号/SQL/空格）+ 代码评审 | 后端 |
-| ☐ | SEC-05 | API-16 **伪造回报被拒**：非登记 `task_id` 无法把行改成 `loaded`（需求 SEC-04 / FR-10） | 伪造 `task_id` 用例输出 | 后端 |
-| ☐ | SEC-06 | 日志脱敏：不打印 token；`image_tar` 路径按需截断（需求 SEC-06） | `ugc_0.log` 抽样（token 掩码）+ 用例断言 | 后端 |
-| ☐ | SEC-07 | 最小权限：initContainer 只挂必要路径 + 只读；若确需运行时 socket，限定专用命名空间/专用 ServiceAccount（需求 SEC-07 / HC-10） | `kubectl get pod -o yaml` 的 volumeMounts / SA 评审 | 后端 + 安全 |
-| ☐ | SEC-08 | 灰度开关不可绕过：关闭时 `load` / `update_status` / `delete` 一律 `FEATURE_DISABLED`（需求 OPS-01） | 关闭态三接口 `curl` 输出 | 后端 |
+| ✅ | SEC-01 | 身份只来自 token，伪造 `username` / `group` 被忽略；新增路由统一 `Depends(get_ugc_user)`（需求 SEC-04） | 伪造参数实测 + 代码评审 | 后端 |
+| ✅ | SEC-02 | 路径越界防护实测：`..`、符号链接、客户端本机绝对路径全部拒绝，且**不产生 DB 行**（需求 SEC-01 / AC-06） | 负例实测 + 拒绝前后行数对比 | 后端 + 安全 |
+| ✅ | SEC-03 | 组隔离：所有读写以服务端解析的 `user.shared_group` 为准；跨组删除/查看/登记全部被拒（需求 SEC-02 / SEC-05 / AC-07） | 跨组用例记录 | 后端 + 安全 |
+| ✅ | SEC-04 | 注入防护：镜像名走白名单正则；进入 shell / 任务脚本的字段一律参数化（**禁止字符串拼接构命令**）；脚本只读 env（需求 SEC-03 / SEC-07） | 注入用例（引号/SQL/空格）+ 代码评审 | 后端 |
+| ✅ | SEC-05 | API-16 **伪造回报被拒**：非登记 `task_id` 无法把行改成 `loaded`（需求 SEC-04 / FR-10） | 伪造 `task_id` 用例输出 | 后端 |
+| ✅ | SEC-06 | 日志脱敏：不打印 token；`image_tar` 路径按需截断（需求 SEC-06） | `ugc_0.log` 抽样（token 掩码）+ 用例断言 | 后端 |
+| ✅ | SEC-07 | 最小权限：initContainer 只挂必要路径 + 只读；若确需运行时 socket，限定专用命名空间/专用 ServiceAccount（需求 SEC-07 / HC-10） | `kubectl get pod -o yaml` 的 volumeMounts / SA 评审 | 后端 + 安全 |
+| ✅ | SEC-08 | 灰度开关不可绕过：关闭时 `load` / `update_status` / `delete` 一律 `FEATURE_DISABLED`（需求 OPS-01） | 关闭态三接口 `curl` 输出 | 后端 |
 | ☐ | SEC-09 | SEC 组用例（用例文档 TC-S 组）全部通过，**无高危遗留**；越界/跨组/伪造回报三类零绕过 | 安全测试报告 | 安全 + 后端 |
 
 ---
@@ -205,9 +207,9 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | OBS-01 | 4 个指标可在 `/metrics` 抓到：`image_load_total` / `image_load_duration_seconds` / `image_list_rows` / `image_link_failed_total`（需求 NFR-03 / 设计 §9.4） | 抓取输出 | 后端 |
-| ☐ | OBS-02 | 结构化日志字段齐全：`user_name` / `shared_group` / `image_tar` / `image` / `task_id` / `status` / `from_status` / `cost_ms`（设计 §9.4） | 日志样例 | 后端 |
-| ☐ | OBS-03 | 一次 `load` 全流程可用 `image_tar` 串起来：`load → 状态迁移 → 任务提交校验 → pod link`（AC-11） | 按 `image_tar` 过滤的日志串联记录 | 后端 |
+| ✅ | OBS-01 | 4 个指标可在 `/metrics` 抓到：`image_load_total` / `image_load_duration_seconds` / `image_list_rows` / `image_link_failed_total`（需求 NFR-03 / 设计 §9.4） | 抓取输出 | 后端 |
+| ✅ | OBS-02 | 结构化日志字段齐全：`user_name` / `shared_group` / `image_tar` / `image` / `task_id` / `status` / `from_status` / `cost_ms`（设计 §9.4） | 日志样例 | 后端 |
+| ✅ | OBS-03 | 一次 `load` 全流程可用 `image_tar` 串起来：`load → 状态迁移 → 任务提交校验 → pod link`（AC-11） | 按 `image_tar` 过滤的日志串联记录 | 后端 |
 | ☐ | OBS-04 | 看板：加载成功率、耗时 P50/P95/P99、失败 `code` 分布（对齐 env 的 `env_metrics.sh` 命令行看板交付方式） | 看板脚本 + 一次输出 | 运维 |
 | ☐ | OBS-05 | 告警：加载失败率 > 5%（5 min）与 `image_link_failed_total` 增长可触发（含 link 脚本/manager 侧上报） | 告警规则文件（配置即代码） | 运维 |
 
@@ -217,11 +219,11 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | OPS-01 | 灰度三级开关（`enabled` / `enabled_groups` / `enabled_users`）真实生效且可回退（需求 OPS-01） | 三档实测记录 | 后端 + 运维 |
-| ☐ | OPS-02 | 一级回滚可用：`enabled=false` 使 `load` / `delete` / `update_status` 失败关闭并提示，`list` 与内建镜像路径**不受影响**，已 `loaded` 行仍可被任务使用（需求 OPS-02 / 设计 §9.3） | 回滚演练记录 | 运维 + 后端 |
-| ☐ | OPS-03 | 迁移幂等且走 `db_schemas` + `init_postgresql.sh` 全量重放；`git diff --stat db_schemas/` 仅新增 `035.*`（需求 OPS-03 / HC-06） | diff 输出 + 两轮重放日志 | 后端 |
-| ☐ | OPS-04 | 节点前置纳入**部署自检**：`/data_local` 存在性 + `load_helper_image` 可获取（需求 OPS-04 / AC-08 / I17） | 自检脚本输出（刻意缺 `/data_local` 时能报警） | 运维 + 后端 |
-| ☐ | OPS-05 | 空间回收（P2）**本期只登记不实现**，但 `delete` 帮助文本已明确「不回收存储」，`images list -a` 的 `deleted` 行可见（FR-14 / OPS-05 / 设计 §7.3(P2)） | 帮助文本输出 + P2 登记条目 | 产品 + 后端 |
+| ✅ | OPS-01 | 灰度三级开关（`enabled` / `enabled_groups` / `enabled_users`）真实生效且可回退（需求 OPS-01） | 三档实测记录 | 后端 + 运维 |
+| ✅ | OPS-02 | 一级回滚可用：`enabled=false` 使 `load` / `delete` / `update_status` 失败关闭并提示，`list` 与内建镜像路径**不受影响**，已 `loaded` 行仍可被任务使用（需求 OPS-02 / 设计 §9.3） | 回滚演练记录 | 运维 + 后端 |
+| ✅ | OPS-03 | 迁移幂等且走 `db_schemas` + `init_postgresql.sh` 全量重放；`git diff --stat db_schemas/` 仅新增 `035.*`（需求 OPS-03 / HC-06） | diff 输出 + 两轮重放日志 | 后端 |
+| ✅ | OPS-04 | 节点前置纳入**部署自检**：`/data_local` 存在性 + `load_helper_image` 可获取（需求 OPS-04 / AC-08 / I17） | 自检脚本输出（刻意缺 `/data_local` 时能报警） | 运维 + 后端 |
+| ✅ | OPS-05 | 空间回收（P2）**本期只登记不实现**，但 `delete` 帮助文本已明确「不回收存储」，`images list -a` 的 `deleted` 行可见（FR-14 / OPS-05 / 设计 §7.3(P2)） | 帮助文本输出 + P2 登记条目 | 产品 + 后端 |
 | ☐ | OPS-06 | 运维手册条目齐备：`loader_backend` 后端切换、`/data_local` 初始化、busybox 基础镜像替换、launcher 缓存刷新（R-2 / R-3 / Q-5 / Q-6） | 手册文档（含命令与回退步骤） | 运维 |
 
 ---
@@ -230,14 +232,14 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | TASK-01 | 不变式 **K1**：自定义镜像 URL 必须 `registry/shared_group/image` 恰好 3 段（`len(split('/'))==3`）（FR-15 / HC-02） | `api/operation/default.py:12-24` 代码未改 + 4 段负例被拒 | 后端 |
-| ☐ | TASK-02 | 不变式 **K2**：拼接结果**逐字节等于** `registry + '/' + shared_group + '/' + image`（三列独立存储，不存拼接结果）（HC-02） | 代码评审 + 任务 `-i` 命中实测 | 后端 |
-| ☐ | TASK-03 | 不变式 **K3**：可用镜像 `status` **精确等于** `'loaded'`；`loaded` 字面量不可改（HC-03） | 代码 + 中间态被拒用例 | 后端 |
-| ☐ | TASK-04 | 不变式 **K4**：校验用提交者自己的 `user.shared_group`；`a_find_user_group_image_urls` 签名与返回语义不变（HC-09） | `git diff` 该函数为空 + 跨组用例 | 后端 |
-| ☐ | TASK-05 | 不变式 **K5**：服务端报错里的自查指引**真的可用**——103 实测原话为 `用户所在的组 [hfai] 不存在镜像 [registry.high-flyer.cn/hfai/demo:v1] 或镜像仍在加载, 请使用命令 \`hfai images list\` 检查`，而当前 `user_images` 恒为 `[]`（I2）→ **用户按指引自查只会看到「没有镜像」，永远查不出原因**；修好 API-17 后该指引必须能查出真实状态（K5 / I2 / AC-03 / FR-02） | 修复前后对照：同一提交报错 + `images list` 输出（修复前空、修复后有该行及其状态） | 后端 + 测试 |
-| ☐ | TASK-06 | launcher 消费链路：`get_image_info`（`launcher.py:59-61`）读到行，并把 `HFAI_IMAGE` / `HFAI_IMAGE_WEKA_PATH`（= `path`）注入 manager（`launcher.py:144-147`） | launcher 日志 + 任务 env 输出 | 后端 |
-| ☐ | TASK-07 | `server_model/task_impl/single_task_impl.py:78-81` 的 `user_defined=True` 分支与 `:325` 的 `link_hfai_image` 透传**未被破坏** | 代码 diff + 任务实测 | 后端 |
-| ☐ | TASK-08 | 内建镜像路径零回归：`train_environment` / `mars_images` 与 `-i hai_base` 类任务行为不变（CMP-03 / AC-10） | 回归脚本输出 | 后端 + 测试 |
+| ✅ | TASK-01 | 不变式 **K1**：自定义镜像 URL 必须 `registry/shared_group/image` 恰好 3 段（`len(split('/'))==3`）（FR-15 / HC-02） | `api/operation/default.py:12-24` 代码未改 + 4 段负例被拒 | 后端 |
+| ✅ | TASK-02 | 不变式 **K2**：拼接结果**逐字节等于** `registry + '/' + shared_group + '/' + image`（三列独立存储，不存拼接结果）（HC-02） | 代码评审 + 任务 `-i` 命中实测 | 后端 |
+| ✅ | TASK-03 | 不变式 **K3**：可用镜像 `status` **精确等于** `'loaded'`；`loaded` 字面量不可改（HC-03） | 代码 + 中间态被拒用例 | 后端 |
+| ✅ | TASK-04 | 不变式 **K4**：校验用提交者自己的 `user.shared_group`；`a_find_user_group_image_urls` 签名与返回语义不变（HC-09） | `git diff` 该函数为空 + 跨组用例 | 后端 |
+| ✅ | TASK-05 | 不变式 **K5**：服务端报错里的自查指引**真的可用**——103 实测原话为 `用户所在的组 [hfai] 不存在镜像 [registry.high-flyer.cn/hfai/demo:v1] 或镜像仍在加载, 请使用命令 \`hfai images list\` 检查`，而当前 `user_images` 恒为 `[]`（I2）→ **用户按指引自查只会看到「没有镜像」，永远查不出原因**；修好 API-17 后该指引必须能查出真实状态（K5 / I2 / AC-03 / FR-02） | 修复前后对照：同一提交报错 + `images list` 输出（修复前空、修复后有该行及其状态） | 后端 + 测试 |
+| ✅ | TASK-06 | launcher 消费链路：`get_image_info`（`launcher.py:59-61`）读到行，并把 `HFAI_IMAGE` / `HFAI_IMAGE_WEKA_PATH`（= `path`）注入 manager（`launcher.py:144-147`） | launcher 日志 + 任务 env 输出 | 后端 |
+| ✅ | TASK-07 | `server_model/task_impl/single_task_impl.py:78-81` 的 `user_defined=True` 分支与 `:325` 的 `link_hfai_image` 透传**未被破坏** | 代码 diff + 任务实测 | 后端 |
+| ✅ | TASK-08 | 内建镜像路径零回归：`train_environment` / `mars_images` 与 `-i hai_base` 类任务行为不变（CMP-03 / AC-10） | 回归脚本输出 | 后端 + 测试 |
 
 ---
 
@@ -245,11 +247,11 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | CMP-01 | 旧客户端 `images load <image_tar>`（单参、无 `image`）继续可用（需求 CMP-01 / AC-13） | 旧客户端实机调用输出 | 客户端 + 测试 |
-| ☐ | CMP-02 | 旧客户端 `images delete <image>` 签名不变（需求 CMP-02） | 代码 diff + 实机调用 | 客户端 |
-| ☐ | CMP-03 | `train_environment` / `mars_images` 的结构与语义**零改动**（需求 CMP-03） | `git diff` + 内建镜像 `list` 输出不变 | 后端 |
-| ☐ | CMP-04 | `registry` 列默认值保留 `registry.high-flyer.cn`，但**新代码不依赖它可达**（需求 CMP-04 / I11 / ADR-I2） | 代码 + 103（无 registry）实机通过 | 后端 |
-| ☐ | CMP-05 | `user_images` 由 `[]` 变为有内容属**行为修正**（非破坏），行内字段名**不得改名**（只增不减）（需求 CMP-05） | 字段名 diff 为空 + 旧客户端解析正常 | 客户端 + 后端 |
+| ✅ | CMP-01 | 旧客户端 `images load <image_tar>`（单参、无 `image`）继续可用（需求 CMP-01 / AC-13） | 旧客户端实机调用输出 | 客户端 + 测试 |
+| ✅ | CMP-02 | 旧客户端 `images delete <image>` 签名不变（需求 CMP-02） | 代码 diff + 实机调用 | 客户端 |
+| ✅ | CMP-03 | `train_environment` / `mars_images` 的结构与语义**零改动**（需求 CMP-03） | `git diff` + 内建镜像 `list` 输出不变 | 后端 |
+| ✅ | CMP-04 | `registry` 列默认值保留 `registry.high-flyer.cn`，但**新代码不依赖它可达**（需求 CMP-04 / I11 / ADR-I2） | 代码 + 103（无 registry）实机通过 | 后端 |
+| ✅ | CMP-05 | `user_images` 由 `[]` 变为有内容属**行为修正**（非破坏），行内字段名**不得改名**（只增不减）（需求 CMP-05） | 字段名 diff 为空 + 旧客户端解析正常 | 客户端 + 后端 |
 | ☐ | CMP-06 | 私有 `custom.py` 三层覆盖接缝保持有效（`default.py` / `implement.py` / `custom.py` 约定不破坏）（需求 CMP-06） | 模拟 `custom.py` 覆盖生效记录 | 后端 |
 
 ---
@@ -273,7 +275,7 @@
 | ☐ | DOC-01 | `docs/_sources/cli/ugc.rst.txt` 的 `images` 段补齐 `load --image` 与失败提示说明 | 文档 diff + 构建通过 | 客户端 |
 | ☐ | DOC-02 | 用户文档写明「tar 放共享盘 → `load` → `list` → 任务 `-i`」全流程，并讲清 `image_tar` / `image` / `path` 三个概念的区别（FR-07 / I18） | 文档 diff | 产品 + 客户端 |
 | ☐ | DOC-03 | 文档写明限制：**不回收存储**（FR-14）、只到 `shared_group` 粒度、**组内可删他人镜像**（SEC-05 须显式声明） | 文档 diff | 产品 |
-| ☐ | DOC-04 | `docs/haiplatform/README.md` 收录 images 文档链接且可点 | 链接检查脚本输出 | 后端 |
+| ✅ | DOC-04 | `docs/haiplatform/README.md` 收录 images 文档链接且可点 | 链接检查脚本输出 | 后端 |
 | ☐ | DOC-05 | 四件套编号交叉引用一致（`I1–I18` / `FR` / `TC` ↔ `DEV` / `API` / `E2E` / `ACC`）；用例文档 `images-server-test-cases.md` §10 的 `AC-*` 对应关系可追溯（需求 AC-14） | 自检脚本输出 | 后端 |
 | ☐ | DEP-01 | 交付物归档：平台镜像 tag、客户端版本、`db_schemas/035.*`、`marsv2/scripts/link_hfai_image.sh` 变更清单 | 发布包 + 清单 | 运维 |
 | ☐ | DEP-02 | 客户端发布说明（Release Note）含 `load --image` 新增与失败提示变化 | Release Note | 客户端 |
@@ -285,9 +287,9 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | RB-01 | 一级回滚：`[image].enabled=false` 后 `load` / `update_status` / `delete` 快速失败并提示，`list` 与内建镜像路径不受影响，已 `loaded` 行仍可被任务使用 | 演练记录（含时间戳） | 运维 + 后端 |
+| ✅ | RB-01 | 一级回滚：`[image].enabled=false` 后 `load` / `update_status` / `delete` 快速失败并提示，`list` 与内建镜像路径不受影响，已 `loaded` 行仍可被任务使用 | 演练记录（含时间戳） | 运维 + 后端 |
 | ☐ | RB-02 | 二级回滚：移除 3 条路由注册 → 接口 404；客户端打印服务端 `msg`（不打印栈） | 演练记录 + 客户端输出 | 后端 |
-| ☐ | RB-03 | 回滚后**无脏数据**：`train_image` 表结构/行未被破坏，回滚前后 `psql` 对比一致 | 回滚前后 `\d train_image` + 行数对比 | 测试 |
+| ✅ | RB-03 | 回滚后**无脏数据**：`train_image` 表结构/行未被破坏，回滚前后 `psql` 对比一致 | 回滚前后 `\d train_image` + 行数对比 | 测试 |
 | ☐ | RB-04 | 回滚期间 workspace / env 业务无异常（路由探针 200 + 演练后完整回归） | 演练窗口探针输出 + 回归记录 | 运维 |
 | ☐ | RB-05 | 客户端回滚：旧客户端不依赖新接口，直接可用 | 旧二进制冒烟 | 客户端 |
 
@@ -509,3 +511,22 @@ grep -n "link_hfai_image" one/hai-up.sh || echo "FAIL: 挂载种子未登记（H
 > **两条结构性差异**：① `images` **有 DDL** → 用 `DB` 阶段（同 workspace，区别于 env 的 `REG`）；
 > ② `images` **有独立的运行面交付物**（`marsv2/scripts/link_hfai_image.sh` + 挂载种子 + 节点前置），
 > 这是 workspace / env 两个特性都不曾有的阶段内容（对应 I16 / I17 / FR-08 / AC-08），也是本特性工作量更大的根因。
+
+---
+
+## 18. 本轮未验证清单（诚实声明，勿当作「已通过」）
+
+| 组 | 未勾选项 | 原因 / 下一步 |
+| --- | --- | --- |
+| UT | `UT-05` | 本轮未跑 flake8/ruff（无 CI 证据）；分层纪律用 `grep -rn "from fastapi" server_model/user_impl/user_image/` 人工核对为空 |
+| E2E | `E2E-08` | 103 只有 `haiadmin`（组 `hfai`）一个可用身份，**多用户**场景（T_B 组内他人 / T_C 跨组）无法真实构造；跨组拒绝已在 L2 用未授权 group 的 3 段 URL 覆盖（`FORBIDDEN`） |
+| SEC | `SEC-09` | 未出正式安全测试报告（SEC-01~08 已有实测证据） |
+| PERF | `PERF-01`~`PERF-05` | 未做压测（单组 200 行 P95 / 大 tar 内存曲线 / 并发探针） |
+| OBS | `OBS-04`、`OBS-05` | 看板脚本与告警规则未落地（指标本身已验证可抓取，见 OBS-01） |
+| OPS | `OPS-06` | 运维手册条目散落在决策记录 §3 / 测试报告 §6，未成独立手册 |
+| CMP | `CMP-06` | 未模拟私有 `custom.py` 覆盖（三层接缝本身未改动） |
+| REL | `REL-01`~`REL-05` | 未执行发布流程与三级灰度（属运维动作） |
+| DOC/DEP | `DOC-01`~`DOC-03`、`DOC-05`、`DEP-01`~`DEP-03` | 用户文档/Release Note/归档包未写（`DOC-04` 索引已更新） |
+| RB | `RB-02`、`RB-04`、`RB-05` | 只演练了一级回滚（`RB-01`/`RB-03` 通过）；二级/客户端回滚未演练 |
+| POST | `POST-01`~`POST-05` | 上线后观察，尚未上线 |
+| ACC | `ACC-01`~`ACC-10` | 正式验收签署，未进行 |

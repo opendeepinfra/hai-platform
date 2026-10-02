@@ -88,8 +88,13 @@ as_user env HOME=/home/fireflyer hai-cli images delete "${IMG_URL}" >/dev/null 2
 if [ "${E2E_PURGE_IMAGE}" = "1" ]; then
   log "--- 1.0) 强制重新导入：从三个节点的 containerd 删除 ${IMG_URL}"
   for NODE in k8s-slave01 k8s-slave02 k8s-slave03; do
-    multipass exec "${NODE}" -- sudo microk8s.ctr -n k8s.io images rm "${IMG_URL}" >/dev/null 2>&1 \
-      && info "${NODE}: 已删除" || info "${NODE}: 本来就没有"
+    # 注意：microk8s.ctr 包装器**自带** -n k8s.io，再传一次会报 "Cannot use two forms of the same flag"
+    OUT=$(multipass exec "${NODE}" -- sudo microk8s.ctr images rm "${IMG_URL}" 2>&1)
+    if multipass exec "${NODE}" -- sudo microk8s.ctr images ls -q 2>/dev/null | grep -qx "${IMG_URL}"; then
+      bad "${NODE}: 镜像仍在（purge 失败：${OUT}）"
+    else
+      ok "${NODE}: 镜像已清除"
+    fi
   done
 fi
 
@@ -108,7 +113,12 @@ log "DB 行：${ROW}"
 log "--- 2) images list 可见 + 重复 load 幂等"
 LIST_LOG=/tmp/e2e_images_list.log
 as_user env HOME=/home/fireflyer hai-cli images list > "${LIST_LOG}" 2>&1 || true
-if grep -q "${IMAGE_NAME}" "${LIST_LOG}"; then ok "images list 能看到该镜像行（修 I2）"; else bad "images list 看不到该镜像（I2 未修）"; tail -n 5 "${LIST_LOG}" | tee -a "${LOG}"; fi
+# 客户端表格会截断长镜像名（实测显示为 registry.high-fly…），因此用 basename(image_tar) 判定
+if grep -q "$(basename "${TAR}")" "${LIST_LOG}"; then
+  ok "images list 能看到该镜像行（修 I2）"
+else
+  bad "images list 看不到该镜像（I2 未修）"; tail -n 5 "${LIST_LOG}" | tee -a "${LOG}"
+fi
 as_user env HOME=/home/fireflyer hai-cli images load "${TAR}" --image "${IMAGE_NAME}" >/dev/null 2>&1 || true
 CNT=$(psql_q "select count(*) from train_image where image_tar='${TAR}'")
 [ "${CNT}" = "1" ] && ok "重复 load 后仍 1 行（幂等，AC-05）" || bad "重复 load 后行数=${CNT}"

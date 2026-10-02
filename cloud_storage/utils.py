@@ -19,7 +19,8 @@ from fastapi_pagination.api import create_page, resolve_params
 from fastapi_pagination.bases import AbstractPage, AbstractParams
 
 from conf import CONF
-from conf.utils import FileInfo, FileType, FilePrivacy, DatasetType, list_local_files_inner, hashkey
+from conf.utils import (FileInfo, FileType, FilePrivacy, DatasetType, list_local_files_inner, hashkey,
+                        get_env_root)
 from db import a_redis, redis_conn
 from utils import asyncwrap
 from .metrics import DB_FAILURE_COUNTER
@@ -30,20 +31,35 @@ from .provider import OSSApi, MockApi
 # 集群内访问外网的proxy
 try:
     proxies = { 'http': CONF.cloud.storage.service.proxy_endpoint, 'https': CONF.cloud.storage.service.proxy_endpoint }
-except:
+except Exception:
     proxies = None
 
-PROVIDER = CONF.cloud.storage.provider
-if PROVIDER == 'oss':
-    cloud_api = OSSApi(CONF.cloud.storage.endpoint,
-                       CONF.cloud.storage.access_key_id,
-                       CONF.cloud.storage.access_key_secret,
-                       uid=CONF.cloud.storage.uid,
-                       role_arn=CONF.cloud.storage.role_arn,
-                       breakpoint_info_path=CONF.cloud.storage.service.breakpoint_info_path,
-                       proxies=proxies)
-else:
-    cloud_api = MockApi()
+# 注意：以下必须保持「导入期无副作用」（设计 ADR-11/ADR-12）。
+# 在没有 [cloud.storage] 配置的宿主（例如 ugc-server）上，import cloud_storage.utils
+# 不允许失败，也不允许在此处注册路由 / on_event。
+PROVIDER = CONF.try_get('cloud.storage.provider', default='oss')
+
+
+class _LazyCloudApi:
+    '''
+    惰性构造 provider，对外保持 `cloud_api.xxx(...)` 的既有调用方式不变。
+    第一次真正使用（属性访问）时才读取配置并实例化，避免导入期副作用。
+    '''
+
+    def __init__(self):
+        self._impl = None
+
+    def _build(self):
+        if self._impl is None:
+            from cloud_storage.service.context import build_cloud_api
+            self._impl = build_cloud_api()
+        return self._impl
+
+    def __getattr__(self, item):
+        return getattr(self._build(), item)
+
+
+cloud_api = _LazyCloudApi()
 
 
 class WorkerPools:
@@ -154,9 +170,23 @@ class StatusRecorder:
         self.recorder = recorder
         self.aio_recorder = aio_recorder
 
+    async def _exec_sync(self, method_name, *args, **kwargs):
+        """
+        统一的「异步接口 + 同步客户端」执行器。
+
+        为什么不用 a_redis：aioredis 2.0.0a1 的连接池在 Redis **短暂不可用**之后
+        （典型场景：pod 重启后 MetalLB 还没把 LoadBalancer VIP 指到新 pod，
+        首次连接报 Error 111）会进入不可恢复的状态，之后每次 await 都抛
+        `await wasn't used with future`，导致状态/进度接口全部 500。
+        同步客户端（redis-py）每条命令独立取连接，配合上层 3 次重试可以自愈。
+        """
+        func = getattr(self.recorder, method_name)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
+
     @metrics_wrapper
     async def a_get(self, key):
-        val = await self.aio_recorder.get(key)
+        val = await self._exec_sync('get', key)
         if val:
             return val.decode()
         return None
@@ -166,7 +196,7 @@ class StatusRecorder:
         '''
         获取hash中的所有key/value
         '''
-        members = await self.aio_recorder.hgetall(name)
+        members = await self._exec_sync('hgetall', name)
         ret = {k.decode():int(v.decode()) for k, v in members.items()}
         return ret
 
@@ -175,30 +205,48 @@ class StatusRecorder:
         '''
         获取hash中的所有key
         '''
-        members = await self.aio_recorder.hkeys(name)
+        members = await self._exec_sync('hkeys', name)
         ret = [m.decode() for m in members]
         return ret
 
     @metrics_wrapper
+    async def a_get_hall(self, name):
+        '''
+        获取hash中的所有key/value（保持字符串，不做 int 转换）
+        '''
+        members = await self._exec_sync('hgetall', name)
+        ret = {k.decode(): v.decode() for k, v in members.items()}
+        return ret
+
+    @metrics_wrapper
+    async def a_set_nx(self, key, value, expires=604800):
+        '''
+        SET NX：只有 key 不存在时才写入，返回是否写入成功。
+        用于多 worker 之间的互斥锁（设计 ADR-5）。
+        '''
+        ret = await self._exec_sync('set', key, value, ex=expires, nx=True)
+        return bool(ret)
+
+    @metrics_wrapper
     async def a_hset(self, name, key, value):
-        await self.aio_recorder.hset(name, key, value)
+        await self._exec_sync('hset', name, key, value)
 
     @metrics_wrapper
     async def a_set(self, key, value, expires=604800):
-        await self.aio_recorder.set(key, value, expires)
+        await self._exec_sync('set', key, value, ex=expires)
 
     @metrics_wrapper
     async def a_expire(self, key, expires=604800):
-        await self.aio_recorder.expire(key, expires)
+        await self._exec_sync('expire', key, expires)
 
     @metrics_wrapper
     async def a_exists(self, key):
-        ret = await self.aio_recorder.exists(key)
+        ret = await self._exec_sync('exists', key)
         return ret > 0
 
     @metrics_wrapper
     async def a_delete(self, key):
-        await self.aio_recorder.delete(key)
+        await self._exec_sync('delete', key)
 
     @metrics_wrapper
     def get(self, key):
@@ -420,11 +468,13 @@ def get_base_path(username, group, name, file_type, file_privacy: FilePrivacy = 
         cloud_base_path = f'{group}/{username}/workspaces/{name}'
         check_is_subpath(workspace_base_path, cluster_base_path)
     elif file_type == FileType.ENV:
-        # 本地venv根目录
-        env_base_path = CONF.cloud.storage.service.env_path
-        cluster_base_path = f'{env_base_path}/{group}/shared/hfai_envs/{username}/{name}'
+        # 本地 venv 根目录：与任务运行时 dirname(HAIENV_PATH) 对齐（设计 §3.3 / ADR-E1）
+        #   cluster: {env_root}/{username}/{name}       ← 数据面真正落盘的位置
+        #   cloud  : {group}/shared/hfai_envs/...       ← S3 key 布局保持不变（CMP-05）
+        env_root = get_env_root()
+        cluster_base_path = f'{env_root}/{username}/{name}'
         cloud_base_path = f'{group}/shared/hfai_envs/{username}/{name}'
-        check_is_subpath(env_base_path, cluster_base_path)
+        check_is_subpath(env_root, cluster_base_path)
     elif file_type == FileType.DATASET:
         # 本地数据集根目录, public
         public_dataset_base_path = CONF.cloud.storage.service.public_dataset_path

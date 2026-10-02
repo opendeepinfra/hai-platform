@@ -1,7 +1,15 @@
-create type sync_status as enum ('running', 'finished', 'failed', 'init', 'stage1_running', 'stage2_running', 'stage1_finished', 'stage1_failed', 'stage2_failed');
-create type file_type as enum ('workspace', 'dataset', 'env', 'doc', 'pypi', 'website');
+do $$
+begin
+  create type sync_status as enum ('running', 'finished', 'failed', 'init', 'stage1_running', 'stage2_running', 'stage1_finished', 'stage1_failed', 'stage2_failed');
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  create type file_type as enum ('workspace', 'dataset', 'env', 'doc', 'pypi', 'website');
+exception when duplicate_object then null;
+end $$;
 
-create table "user_downloaded_files" (
+create table if not exists "user_downloaded_files" (
     "user_name" varchar(255) not null,
     "user_role" varchar(255) not null,
     "file_type" file_type not null,
@@ -15,7 +23,7 @@ create table "user_downloaded_files" (
     "deleted_at" timestamp,
     constraint "pri-user_downloaded_files-file_path-file_mtime" primary key ("file_path", "file_md5")
 );
-create index "idx-user_downloaded_files-user_name" on "user_downloaded_files" ("user_name");
+create index if not exists "idx-user_downloaded_files-user_name" on "user_downloaded_files" ("user_name");
 comment on table "user_downloaded_files" is '用户上传到外部文件列表';
 comment on column "user_downloaded_files"."user_name" is '用户名';
 comment on column "user_downloaded_files"."user_role" is '用户身份类型';
@@ -36,4 +44,5 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_user_downloaded_files_updated_at on "user_downloaded_files";
 create trigger trigger_update_user_downloaded_files_updated_at before update on "user_downloaded_files" for each row execute procedure update_user_downloaded_files_updated_at();

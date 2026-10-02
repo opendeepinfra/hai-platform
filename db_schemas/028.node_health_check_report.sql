@@ -1,4 +1,4 @@
-create table "node_health_check_report" (
+create table if not exists "node_health_check_report" (
     "node" varchar(255) not null,
     "source" varchar(255) not null,
     "err_msg" varchar(2047) not null,
@@ -27,5 +27,5 @@ comment on column "node_health_check_report"."label_node_success" is '是否正�
 comment on column "node_health_check_report"."created_at" is '创建时间';
 
 
-create index "idx-node_health_check_report-nso" on "node_health_check_report" ("node", "source", "occur_time");
-create index "idx-node_health_check_report-occur_time" on "node_health_check_report" ("occur_time");
+create index if not exists "idx-node_health_check_report-nso" on "node_health_check_report" ("node", "source", "occur_time");
+create index if not exists "idx-node_health_check_report-occur_time" on "node_health_check_report" ("occur_time");

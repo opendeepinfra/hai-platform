@@ -73,6 +73,59 @@ haienv create < myenv >
 
 注意不加 `--no_extend` 命令表示从 HAI Platform 默认环境扩展构建用户环境，最大降低环境配置的工作量。环境创建后即可进入环境并执行自定义安装。
 
+> `haienv create` 会检查容器内的 CUDA 与 python 版本，并给出**提示（不阻断创建）**：
+>
+> - **CUDA**：平台基线为 **11.x（含 11.5）**。会依次探测 `nvcc` 与 `/usr/local/cuda/bin/nvcc`，
+>   任一命中即视为匹配；都不匹配时只打印 WARNING（CUDA 版本不影响 conda 环境本身，但之后安装
+>   CUDA 相关 wheel（torch/cupy 等）时可能与集群运行时/驱动不匹配）。
+>   判定规则可用 `HAIENV_CUDA_VERSION_RE` 调整（按 `release <主>.<次>` 匹配）；
+>   需要像以前那样**硬性拦截**时设置 `HAIENV_CUDA_STRICT=1`。
+> - **python**：默认取当前解释器版本，而集群基础环境是 `3.8`；两者不一致时会提示，建议显式
+>   `haienv create myenv --no_extend -p 3.8`（基线可用 `HAIENV_CLUSTER_PY` 调整）。
+> - **extend**：默认的「扩展当前环境」只在平台镜像/开发容器内有意义；在其它机器上会继承**本机**
+>   python 环境，此时应加 `--no_extend`。
+
 除此以外，`haienv` 支持用户在本地（集群外）建立个人环境并推送到集群，这种方式建立的环境无法扩展基础环境，需要用户自己验证和维护。
 
 自建环境与集群默认环境使用方式相同，支持提交任务指定和代码中加载。
+
+### 把本地环境推送到集群（`hai-cli env push`）
+
+在本地（集群外）机器上创建环境后，用 `env push` 上传并在集群侧登记，之后即可像集群内自建环境一样使用：
+
+```shell
+# 1) 本地创建（注意 --no_extend：**扩展环境（extend）不支持上传**）
+haienv create myenv --no_extend --py 3.8
+
+# 2) 推送：内部流程为「预检 → 上传（对象存储 → 集群共享盘）→ 写集群侧注册表」
+hai-cli env push myenv --provider s3          # provider 需与服务端 [cloud.storage].provider 一致
+
+# 3) 提交任务时指定该环境（任务启动脚本会自动 source haienv）
+HF_ENV_NAME=myenv HF_ENV_OWNER=<你的用户名> hai-cli python train.py -- -n 1 -g training --name exp1
+```
+
+```shell
+# 查看与验证
+hai-cli env list                 # 集群侧（共享盘）可见的环境列表
+source haienv myenv              # 在集群/开发容器内加载
+```
+
+**前置条件与限制**
+
+- 只支持**非 extend** 环境；`extend=True` 会被客户端与服务端同时拒绝。
+- 本地环境需要与集群的基础系统/驱动匹配（建议本机 Python 版本与目标环境一致）。
+- 首次推送依赖集群侧 `env_root/<用户名>` 目录对平台账号可写；若报
+  `ENV_REGISTRY_NOT_WRITABLE`，请联系管理员修正目录权限。
+
+**常见失败与处置**
+
+| 现象 | 原因 | 处置 |
+| --- | --- | --- |
+| `未找到名为 X 的虚拟环境` | 本地 `HAIENV_PATH` 下没有该环境 | `HAIENV_PATH=<创建时目录> hai-cli env list` 确认 |
+| `暂不支持上传 extend 模式的 venv` | 环境是扩展环境 | 用 `--no_extend` 重建 |
+| `上传失败：… 退出码非 0` | 网络/对象存储/STS 问题 | 检查 `--provider` 与服务端 `[cloud.storage].provider` 是否一致后重试 |
+| `环境已上传但注册失败，可重试` | 集群侧注册表写入失败（权限/锁） | 修复后**重复执行同一条命令**即可只补登记、不重传 |
+| `目标目录 … 不存在（等待 10s 后仍不可见）` | 目录刚由其它机器落盘，NFS 属性缓存在集群侧尚未过期（`acdirmax`≈60s） | 直接**重复执行同一条命令**：会复用同一目录与同一批对象 key，不会重复占用后缀 |
+| `条目当前无法读取` / `ENV_REGISTRY_READ_FAILED` | 集群侧注册表里该环境由**不同版本的 haienv** 写入或已损坏（为避免产生重复环境，本次上传被主动中止） | 联系管理员检查 `env_root/<用户名>/venv.db`，并对齐客户端与服务端的 `haienv` 版本 |
+| 任务内报 `no valid env found` | 未推送成功 / `HF_ENV_OWNER` 不对 / 任务环境变量未生效 | 先 `hai-cli env list` 确认可见；确认 `HF_ENV_OWNER` |
+

@@ -1,4 +1,4 @@
-create table "task_ng" (
+create table if not exists "task_ng" (
     "id" serial,
     "nb_name" varchar(511) not null,
     "user_name" varchar(255) not null,
@@ -28,22 +28,22 @@ create table "task_ng" (
     "last_task" boolean default false,
     constraint "pri-task_ng-id" primary key ("id")
 );
-create index "idx-task_ng-user_name" on "task_ng" ("user_name");
-create index "idx-task_ng-nb_name" on "task_ng" ("nb_name");
-create index "idx-task_ng-chain_id" on "task_ng" ("chain_id");
-create index "idx-task_ng-first_id" on "task_ng" ("first_id");
-create index "idx-task_ng-suspend_updated_at" on "task_ng" ("suspend_updated_at");
-create index "idx-task_ng-begin_at" on "task_ng" ("begin_at");
-create index "idx-task_ng-end_at" on "task_ng" ("end_at");
-create index "idx-task_ng-created_at" on "task_ng" ("created_at");
-create index "idx-task_ng-chain_id-varchar" on "task_ng"("chain_id" varchar_pattern_ops);
-create index "idx-task_ng-worker_status" on "task_ng" ("worker_status");
-create index "idx-task_ng-backend" on "task_ng" ("backend");
-create index "idx-task_ng-last_task" on "task_ng" ("last_task");
-create index "idx-task_ng-queue_status" on "task_ng" ("queue_status");
-create index "idx-task_ng-user_name-last_task-id-task_type-w" on "task_ng" ("user_name", "last_task", "id", "task_type", "worker_status");
-create index "idx-task_ng-user_name-last_task-first_id-task_type-w" on "task_ng" ("user_name", "last_task", "first_id", "task_type", "worker_status");
-create index "idx-task_ng-user_name-created_at" on "task_ng" ("user_name", "created_at");
+create index if not exists "idx-task_ng-user_name" on "task_ng" ("user_name");
+create index if not exists "idx-task_ng-nb_name" on "task_ng" ("nb_name");
+create index if not exists "idx-task_ng-chain_id" on "task_ng" ("chain_id");
+create index if not exists "idx-task_ng-first_id" on "task_ng" ("first_id");
+create index if not exists "idx-task_ng-suspend_updated_at" on "task_ng" ("suspend_updated_at");
+create index if not exists "idx-task_ng-begin_at" on "task_ng" ("begin_at");
+create index if not exists "idx-task_ng-end_at" on "task_ng" ("end_at");
+create index if not exists "idx-task_ng-created_at" on "task_ng" ("created_at");
+create index if not exists "idx-task_ng-chain_id-varchar" on "task_ng"("chain_id" varchar_pattern_ops);
+create index if not exists "idx-task_ng-worker_status" on "task_ng" ("worker_status");
+create index if not exists "idx-task_ng-backend" on "task_ng" ("backend");
+create index if not exists "idx-task_ng-last_task" on "task_ng" ("last_task");
+create index if not exists "idx-task_ng-queue_status" on "task_ng" ("queue_status");
+create index if not exists "idx-task_ng-user_name-last_task-id-task_type-w" on "task_ng" ("user_name", "last_task", "id", "task_type", "worker_status");
+create index if not exists "idx-task_ng-user_name-last_task-first_id-task_type-w" on "task_ng" ("user_name", "last_task", "first_id", "task_type", "worker_status");
+create index if not exists "idx-task_ng-user_name-created_at" on "task_ng" ("user_name", "created_at");
 comment on table "task_ng" is '记录任务的机器运行数据';
 comment on column "task_ng"."id" is '任务的 id';
 comment on column "task_ng"."nb_name" is '任务的 nb_name';
@@ -80,4 +80,5 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_task_ng_queue_status on "task_ng";
 create trigger trigger_update_task_ng_queue_status before insert or update of "queue_status" on "task_ng" for each row execute procedure update_task_ng_queue_status();

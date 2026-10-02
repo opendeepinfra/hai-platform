@@ -1,4 +1,4 @@
-create table "user_artifact" (
+create table if not exists "user_artifact" (
     "user_name" varchar(255) not null,
     "name" varchar(255) not null,
     "version" varchar(2047) not null default 'default',
@@ -12,7 +12,7 @@ create table "user_artifact" (
     constraint "user_artifact-check-name" CHECK ("name" != ''),
     constraint "pri-user_artifact-user_name-name-version" primary key ("user_name", "name", "version")
 );
-create index "idx-user_artifact-name-version" on "user_artifact" ("name", "version");
+create index if not exists "idx-user_artifact-name-version" on "user_artifact" ("name", "version");
 comment on table "user_artifact" is 'user_artifact 表';
 comment on column "user_artifact"."user_name" is '归属用户名';
 comment on column "user_artifact"."name" is 'artifact name';
@@ -32,6 +32,7 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_user_artifact_updated_at on "user_artifact";
 create trigger trigger_update_user_artifact_updated_at before update on "user_artifact" for each row execute procedure update_user_artifact_updated_at();
 
 create or replace function delete_user_artifact_update_mapping()
@@ -54,4 +55,5 @@ begin
 end;
 $$ language 'plpgsql';
 
+drop trigger if exists trigger_delete_user_artifact_update_mapping on "user_artifact";
 create trigger trigger_delete_user_artifact_update_mapping after delete on "user_artifact" for each row execute procedure delete_user_artifact_update_mapping();

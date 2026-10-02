@@ -20,7 +20,11 @@ mkdir -p ${HFAI_PATH}/conf
 touch ${HFAI_PATH}/conf/__init__.py
 
 cp -r conf/flags ${HFAI_PATH}/conf/flags
-[[ $external == true ]] && echo "" > ${HFAI_PATH}/conf/flags/custom.py
+# 保证 `import hfai.conf.flags` 可用：base_model 的 CustomFinder 只接管
+#   <…>/hfai/client/** 与 <…>/hfai/base_model/** 下的 custom 模块，
+#   hfai/conf/flags/custom.py 必须真实存在（`conf/flags/implement.py:3` 会 `from .custom import *`）。
+# 原实现只在 external=true 时创建，导致构建出的 hai-cli 一执行就 ModuleNotFoundError。
+echo "" > ${HFAI_PATH}/conf/flags/custom.py
 
 python client/patch_client.py --hfai_path ${HFAI_PATH}
 

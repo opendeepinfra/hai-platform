@@ -1,4 +1,4 @@
-create table "task_metrics" (
+create table if not exists "task_metrics" (
     "id" serial,
     "task_id" integer not null,
     "gpu_rate" decimal(7, 4) null,

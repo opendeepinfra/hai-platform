@@ -1,4 +1,4 @@
-create table "host" (
+create table if not exists "host" (
     "node" varchar(255) not null,
     "gpu_num" integer not null,
     "type" varchar(255) not null default 'gpu',

@@ -39,7 +39,7 @@ RUN mkdir -p /run/sshd && \
   echo "[supervisorctl]\nserverurl=unix:///tmp/supervisor.sock" > /etc/supervisord.conf
 
 # 安装 setuptools_scm, 升级pip以支持cache
-RUN pip install "setuptools_scm>=6.3.2" --index-url=https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host=pypi.tuna.tsinghua.edu.cn && \
+RUN pip install "setuptools==62.6.0" "setuptools_scm==6.4.2" --index-url=https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host=pypi.tuna.tsinghua.edu.cn && \
   pip install "pip==23.0" --index-url=https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host=pypi.tuna.tsinghua.edu.cn
 
 RUN --mount=type=cache,target=/root/.cache/pip \

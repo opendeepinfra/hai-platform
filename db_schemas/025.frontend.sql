@@ -1,1 +1,1 @@
-CREATE SCHEMA frontend;
+CREATE SCHEMA if not exists frontend;

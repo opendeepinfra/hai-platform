@@ -222,6 +222,41 @@ async def http_exception_handler(request, exc):
     return StarletteJSONResponse(_res_json, status_code=exc.status_code)
 
 
+# ---------------- /ugc/* 统一错误改写（CON-3 / 设计 §6.4 / Checklist DEV-23） ----------------
+# 客户端 async_requests 会先断言 'success' in result，再断言 result['success'] == 1，
+# 因此任何 4xx/5xx 与校验失败都不能返回裸 {"detail": ...}。
+
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
+from cloud_storage.service.errors import WorkspaceError
+
+
+@app.exception_handler(WorkspaceError)
+async def workspace_error_handler(request, exc: WorkspaceError):
+    return StarletteJSONResponse(exc.to_response(), status_code=exc.http_status)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request, exc):
+    # 保持 422 状态码，但把响应体改写成带 success 的形状
+    errors = exc.errors()
+    msg = '请求参数非法'
+    if errors:
+        first = errors[0]
+        loc = '.'.join(str(x) for x in first.get('loc', []) if x != 'body')
+        msg = f'请求参数非法: {loc} {first.get("msg", "")}'.strip()
+    return StarletteJSONResponse(
+        {
+            'success': 0,
+            'code': 'INVALID_PARAM',
+            'msg': msg,
+            'detail': jsonable_encoder(errors),
+        },
+        status_code=422,
+    )
+
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=['*'],

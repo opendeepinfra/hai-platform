@@ -1,4 +1,4 @@
-create table "multi_server_config" (
+create table if not exists "multi_server_config" (
     "module" varchar(255) not null,
     "key" varchar(255) not null,
     "value" jsonb not null,

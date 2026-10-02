@@ -1,5 +1,9 @@
-create type user_role as enum ('internal', 'external');
-create table "user" (
+do $$
+begin
+  create type user_role as enum ('internal', 'external');
+exception when duplicate_object then null;
+end $$;
+create table if not exists "user" (
     "user_id" integer not null,
     "user_name" varchar(255) not null,
     "nick_name" varchar(255) default null,
@@ -34,6 +38,7 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_add_user_id on "user";
 create trigger trigger_add_user_id before insert on "user" for each row execute procedure add_user_id();
 
 create or replace function avoid_default()
@@ -45,6 +50,7 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_avoid_default on "user";
 create trigger trigger_avoid_default before insert on "user" for each row execute procedure avoid_default();
 
 create or replace function update_user_nick_name()
@@ -56,4 +62,5 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_user_nick_name on "user";
 create trigger trigger_update_user_nick_name before insert on "user" for each row execute procedure update_user_nick_name();

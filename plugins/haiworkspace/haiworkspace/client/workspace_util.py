@@ -19,6 +19,19 @@ from .utils import FileType, SyncDirection, SyncStatus, FileInfo, FileList, File
     get_file_info, list_local_files_inner, hashkey, zip_dir, tz_utc_8
 # cloud_storage/provider
 from .provider import OSSApi, MockApi
+try:
+    # s3.py 由 install.sh 从 cloud_storage/provider/ 一起打包进来；
+    # 兼容更早的客户端产物（那时还没有这个模块）
+    from .provider import S3Api
+except Exception:  # pragma: no cover
+    S3Api = None
+
+# provider 名称 -> 实现类（None 会退回 MockApi）
+CLOUD_API_REGISTRY = {
+    'oss': OSSApi,
+    's3': S3Api,
+    'rustfs': S3Api,
+}
 
 from itertools import chain
 
@@ -105,13 +118,21 @@ def print_diff(local_only_files,
 ############################################ 访问 server #################################################
 
 
+def enum_value(value):
+    '''
+    枚举成员一律取 `.value` 后再拼进 URL/命令行（修 F2：`{FileType.ENV}` 会插值成
+    字面量 'FileType.ENV'；`{SyncDirection.PUSH}` 同理）。字符串原样返回。
+    '''
+    return getattr(value, 'value', value)
+
+
 async def get_sts_token(provider, name, file_type, token_expires, **kwargs):
     """
     获取云端存储的临时token
     """
     token = kwargs.get('token', mars_token())
     timeout = 60
-    url = f'{mars_url()}/ugc/get_sts_token?token={token}&name={name}&file_type={file_type}&ttl_seconds={token_expires}'
+    url = f'{mars_url()}/ugc/get_sts_token?token={token}&name={name}&file_type={enum_value(file_type)}&ttl_seconds={token_expires}'
     result = await async_requests(RequestMethod.POST,
                                   url,
                                   retries=3,
@@ -126,7 +147,7 @@ async def set_sync_status(file_type: FileType, workspace_name,
                           local_path, cluster_path, **kwargs):
     token = kwargs.get('token', mars_token())
     timeout = 60
-    url = f'{mars_url()}/ugc/set_sync_status?token={token}&file_type={file_type}&name={workspace_name}&direction={direction}&status={status}&local_path={local_path}&cluster_path={cluster_path}'
+    url = f'{mars_url()}/ugc/set_sync_status?token={token}&file_type={enum_value(file_type)}&name={workspace_name}&direction={enum_value(direction)}&status={enum_value(status)}&local_path={local_path}&cluster_path={cluster_path}'
     await async_requests(RequestMethod.POST, url, retries=3, timeout=timeout)
     return
 
@@ -134,7 +155,7 @@ async def set_sync_status(file_type: FileType, workspace_name,
 async def get_sync_status(file_type: FileType, workspace_name='*', **kwargs):
     token = kwargs.get('token', mars_token())
     timeout = 60
-    url = f'{mars_url()}/ugc/get_sync_status?token={token}&file_type={file_type}&name={workspace_name}'
+    url = f'{mars_url()}/ugc/get_sync_status?token={token}&file_type={enum_value(file_type)}&name={workspace_name}'
     result = await async_requests(RequestMethod.POST,
                                   url,
                                   retries=3,
@@ -145,7 +166,7 @@ async def get_sync_status(file_type: FileType, workspace_name='*', **kwargs):
 async def delete_workspace(workspace_name, files, **kwargs):
     token = kwargs.get('token', mars_token())
     timeout = 60
-    url = f'{mars_url()}/ugc/delete_files?token={token}&name={workspace_name}&file_type={FileType.WORKSPACE}'
+    url = f'{mars_url()}/ugc/delete_files?token={token}&name={workspace_name}&file_type={enum_value(FileType.WORKSPACE)}'
     file_list = FileList(files=list(files))
     data = f'{{"file_list": {file_list.json()}}}'
     await async_requests(RequestMethod.POST, url, retries=3, data=data, timeout=timeout)
@@ -293,11 +314,13 @@ async def get_cloud_api(provider, name, file_type, token_expires, connect_timeou
         'proxies': {'http': proxy, 'https': proxy} if proxy else None,
         'connect_timeout': connect_timeout,
     }
-    if provider == 'oss':
-        cloud_api = OSSApi(**kwargs)
-    else:
-        print_bold('Using mock cloud api, please check your provider config!')
-        cloud_api = MockApi(**kwargs)
+    # provider 映射表：从「写死的 if provider == 'oss'」改为查表，
+    # 这样新增 provider（s3=自建 RustFS/MinIO、localfs=本地目录）不需要再改客户端逻辑。
+    cloud_cls = CLOUD_API_REGISTRY.get(provider)
+    if cloud_cls is None:
+        print_bold(f'未知的 provider: {provider}, 请检查配置；将使用 mock cloud api')
+        cloud_cls = MockApi
+    cloud_api = cloud_cls(**kwargs)
     return cloud_api, auth_token['bucket']
 
 

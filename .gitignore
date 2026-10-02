@@ -3,3 +3,19 @@
 /docs/docs/source/generated
 *.pyc
 build/
+
+# ── Terraform（deploy/terraform/**）─────────────────────────────
+# 本地 state / provider 缓存 / 真实变量文件都不入库；
+# 变量请复制 terraform.tfvars.example 后填写。
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/terraform.tfvars
+**/crash.log
+
+# ── hai-cli / 插件 wheel 本地构建产物（one/build_cli.sh）──────
+/one/hfai/
+/one/dist/
+/one/*.egg-info/
+/one/hai-cli
+/one/hai-up

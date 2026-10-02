@@ -124,7 +124,11 @@ async def push(force: bool = False, no_checksum: bool = False, no_hfignore: bool
         exclude_list = []
     elif file_type == FileType.ENV:
         provider, local_path, remote_path, name = env_provider, env_local_path, env_remote_path, os.path.basename(env_remote_path)
-        exclude_list = ['activate', 'pip.conf']
+        # C-7：**不能**排除 `activate` —— 集群侧 env 目录必须自带 activate，否则任务里
+        # `source haienv <name>` 会报 `<prefix>/activate: No such file or directory`（环境不可用）。
+        # conda 生成的 activate 用 `${BASH_SOURCE[0]}` 推导环境自身路径，因此换到集群路径仍然可用；
+        # 只有 `PIP_CONFIG_FILE` / `PYTHONUSERBASE` 仍指向创建时的绝对路径（不影响 source 与 import）。
+        exclude_list = []
     else:
         print(f'不支持的file_type: {file_type}')
         return False

@@ -1,4 +1,4 @@
-create table "storage" (
+create table if not exists "storage" (
     "host_path" varchar(255) not null,
     "mount_path" varchar(255) not null,
     "owners" varchar[] not null,
@@ -8,8 +8,8 @@ create table "storage" (
     "action" varchar(64) not null,
     "active" boolean not null default true
 );
-create index "idx-host_path-storage" on "storage" ("host_path");
-create index "idx-mount_path-storage" on "storage" ("mount_path");
+create index if not exists "idx-host_path-storage" on "storage" ("host_path");
+create index if not exists "idx-mount_path-storage" on "storage" ("mount_path");
 comment on table "storage" is '用户存储表';
 comment on column "storage"."owners" is '用户、用户组的集合';
 comment on column "storage"."host_path" is '挂载点的 host_path';

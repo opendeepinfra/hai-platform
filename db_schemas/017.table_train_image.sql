@@ -1,4 +1,4 @@
-create table public.train_image
+create table if not exists public.train_image
 (
     image_tar varchar not null,
 	image varchar default ''::character varying not null,
@@ -21,7 +21,7 @@ comment on column public.train_image.shared_group is '哪个 group 可以共享�
 
 alter table public.train_image owner to root;
 
-create unique index train_image_image_uindex
+create unique index if not exists train_image_image_uindex
 	on public.train_image (image_tar);
 
 create or replace function update_train_image_updated_at()
@@ -31,4 +31,5 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_train_image_updated_at on "train_image";
 create trigger trigger_update_train_image_updated_at before update on "train_image" for each row execute procedure update_train_image_updated_at();

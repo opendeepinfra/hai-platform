@@ -2,6 +2,7 @@ import hashlib
 import fnmatch
 import mmap
 import os
+import re
 import shutil
 import stat
 import zipfile
@@ -404,3 +405,69 @@ def bytes_to_human(n):
         n /= 1024
         idx += 1
     return '%.2f%sB' % (n, symbol[idx])
+
+
+# ---------------------------------------------------------------------------
+# haienv（`hai-cli env`）路径单点定义 —— 设计 docs/haiplatform/env/env-server-design.md §3.1
+#
+# 约定：
+#   env_root     = {env_path}/hfai_envs                # 集群侧所有用户 env 的父目录
+#   user_env_dir = {env_root}/{user} = dirname(HAIENV_PATH)
+#   注册表        = {user_env_dir}/venv.db 的 haienv 表
+#   env prefix   = {user_env_dir}/{name}_{suffix}
+#
+# 约束（ADR-E3）：
+#   - 本模块被 `conf/__init__.py` star-import，**不得**在导入期 import conf（循环导入）
+#   - 只依赖 os/re + 惰性 CONF；任何外部异常都退化为默认值，不得让 import 失败
+#   - 服务端（cloud_storage / server_model）与客户端（hfai client 的 conf/utils.py 副本）
+#     共用这一份实现，禁止在别处硬编码 'hfai_envs'
+# ---------------------------------------------------------------------------
+
+ENV_DIR_NAME = 'hfai_envs'
+DEFAULT_ENV_PATH = '/hf_shared'
+# 名称白名单：首字符字母数字，其余允许字母数字与 . _ -，总长 1~64
+ENV_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+
+
+def normalize_env_path(path) -> str:
+    '''
+    归一化 env 家族父根：去尾斜杠 / 去重复分隔符 / 转绝对路径。
+    空值取默认 /hf_shared（设计 §3.1）。
+    '''
+    if path is None or (isinstance(path, str) and path.strip() == ''):
+        path = DEFAULT_ENV_PATH
+    try:
+        path = os.path.expanduser(str(path).strip())
+        return os.path.normpath(os.path.abspath(path))
+    except Exception:
+        return DEFAULT_ENV_PATH
+
+
+def get_env_path() -> str:
+    '''配置项 [cloud.storage.service] env_path（env 家族父根），默认 /hf_shared。'''
+    try:
+        from conf import CONF
+        value = CONF.try_get('cloud.storage.service.env_path', default=DEFAULT_ENV_PATH)
+    except Exception:
+        value = DEFAULT_ENV_PATH
+    return normalize_env_path(value)
+
+
+def get_env_root() -> str:
+    '''env_root = {env_path}/hfai_envs，等于任务运行时 dirname(HAIENV_PATH)。'''
+    return os.path.join(get_env_path(), ENV_DIR_NAME)
+
+
+def get_user_env_dir(user) -> str:
+    '''某个用户的 env 目录 = dirname(HAIENV_PATH)。'''
+    return os.path.join(get_env_root(), str(user))
+
+
+def get_env_registry_path(user) -> str:
+    '''某个用户的注册表（venv.db）绝对路径。'''
+    return os.path.join(get_user_env_dir(user), 'venv.db')
+
+
+def get_env_dir_name(name, suffix=0) -> str:
+    '''env 目录名：{name}_{suffix}，与客户端 haienv.client.model.get_haienv_path 一致。'''
+    return f'{name}_{int(suffix)}'

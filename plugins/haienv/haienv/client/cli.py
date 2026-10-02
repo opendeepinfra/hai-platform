@@ -1,6 +1,6 @@
 import asyncclick as click
 
-from .command import create, list, remove, config
+from .command import create, list, remove, config, push
 
 
 class HandleHfaiGroupArgs(click.Group):
@@ -20,6 +20,7 @@ cli.add_command(create)
 cli.add_command(list)
 cli.add_command(remove)
 cli.add_command(config)
+cli.add_command(push)
 
 if __name__ == '__main__':
     cli(_anyio_backend='asyncio')

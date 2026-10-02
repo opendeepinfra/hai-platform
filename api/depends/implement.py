@@ -107,6 +107,42 @@ async def get_new_nb_name(nb_name: str):
     return nb_name[len('DL_CLUSTER_'):]
 
 
+async def get_ugc_user(request: Request):
+    '''
+    /ugc/* 的鉴权依赖：身份**只**来自查询串（或 Body）里的 token（SEC-01）。
+
+    - 客户端可能同时传 username/group/userid，这里一律忽略
+    - 失败时抛带 success 的 HTTPException，客户端不会看到裸 {"detail": ...}（CON-3）
+    '''
+    token = request.query_params.get('token')
+    if token is None:
+        try:
+            token = ujson.loads(await request.body()).get('token')
+        except Exception:
+            token = None
+    if token is None:
+        raise HTTPException(status_code=403, detail={
+            'success': 0, 'code': 'UNAUTHORIZED', 'msg': '需要指定 token'
+        })
+
+    user = await AioUserSelector.from_token(token=token)
+    if user is None:
+        expired_user = await AioUserSelector.from_token(token=token, allow_expired=True)
+        if expired_user is not None:
+            raise HTTPException(status_code=401, detail={
+                'success': 0, 'code': 'UNAUTHORIZED', 'msg': '该 token 已经过期了，请重新提供凭证'
+            })
+        raise HTTPException(status_code=403, detail={
+            'success': 0, 'code': 'UNAUTHORIZED', 'msg': '根据 token 未找到用户'
+        })
+    if not user.active:
+        raise HTTPException(status_code=401, detail={
+            'success': 0, 'code': 'UNAUTHORIZED', 'msg': '您的账号为不活跃状态，无法访问集群服务'
+        })
+    return user
+
+
+
 class API_NOTES(BaseModel):
     content: str
 

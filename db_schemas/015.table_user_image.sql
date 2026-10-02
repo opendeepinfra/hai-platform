@@ -1,4 +1,4 @@
-create table "user_image" (
+create table if not exists "user_image" (
     "user_name" varchar(255) not null,
     "description" varchar(255) not null,
     "image_ref" varchar(255) not null,
@@ -6,7 +6,7 @@ create table "user_image" (
     "created_at" timestamp not null default current_timestamp,
     constraint "pri-user_image-image_ref" primary key ("image_ref")
 );
-create index "idx-user_image-user_name" on "user_image" ("user_name");
+create index if not exists "idx-user_image-user_name" on "user_image" ("user_name");
 comment on table "user_image" is '用户可用镜像列表';
 comment on column "user_image"."user_name" is '用户名';
 comment on column "user_image"."description" is '镜像的描述';
@@ -21,4 +21,5 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_user_image_updated_at on "user_image";
 create trigger trigger_update_user_image_updated_at before update on "user_image" for each row execute procedure update_user_image_updated_at();

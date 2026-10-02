@@ -22,7 +22,9 @@ if __name__ == "__main__":
     if server_name == 'log-forest':
         server_module = 'log_forest_server:app'
     elif server_name == 'cloud-storage':
-        server_module = 'cloud_storage:app'
+        # 注意：不能再写 'cloud_storage:app' —— cloud_storage/__init__.py 为了
+        # 避免 ugc-server 侧产生路由/事件副作用，已不再 re-export .api（ADR-11）
+        server_module = 'cloud_storage.api:app'
     else:  # query monitor ugc operating
         server_module = 'api.register:app'
     uvicorn.run(server_module, host="0.0.0.0", port=port, log_level='debug', access_log=False, workers=CONF.server_workers.get(server_name, 1))

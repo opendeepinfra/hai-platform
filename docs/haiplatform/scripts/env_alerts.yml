@@ -1,0 +1,81 @@
+# haienv（`hai-cli env push`）告警规则 —— Checklist OBS-03 的交付物（配置即代码）。
+#
+# 现状：103 测试环境**没有** Prometheus / Grafana（`kubectl get pods -A | grep -i prometh` 为空），
+# 因此本文件不在这里 apply，只作为生产集群的规则来源；103 上的等价物是 `env_metrics.sh`
+# （同一批指标名 + 同一个 5% 阈值）。
+#
+# 指标来源：
+#   env_push_requests_total{api,result,code}          /metrics（ugc-server）
+#   env_register_duration_seconds{result}             同上（Histogram）
+#   env_registry_write_failures_total{reason}         同上（reason: permission/locked/import/assert/unknown）
+#   env_registry_read_failures_total{reason}          同上（reason: decode_all/decode_partial，N3）
+#
+# 使用（生产集群有 Prometheus Operator 时）：
+#   kubectl -n <ns> apply -f env_alerts.yml
+groups:
+  - name: hai-cli-env
+    rules:
+      # OBS-03：注册失败率 > 5%（5 min）
+      - alert: HaiEnvRegisterFailureRateHigh
+        expr: |
+          sum(rate(env_push_requests_total{api="register_cluster_venv",result="fail"}[5m]))
+          /
+          clamp_min(sum(rate(env_push_requests_total{api="register_cluster_venv"}[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: hai-cli-env
+        annotations:
+          summary: "env push 注册失败率 > 5%（5 分钟）"
+          description: "检查 /metrics 的 code 分布与 env_registry_write_failures_total 的 reason；排障见 docs/haiplatform/env/env-server-test-report.md"
+
+      # 预检失败率异常（通常意味着客户端参数/开关问题，而不是注册表问题）
+      - alert: HaiEnvUpdateFailureRateHigh
+        expr: |
+          sum(rate(env_push_requests_total{api="update_cluster_venv",result="fail"}[5m]))
+          /
+          clamp_min(sum(rate(env_push_requests_total{api="update_cluster_venv"}[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: hai-cli-env
+        annotations:
+          summary: "env push 预检（API-11）失败率 > 5%（5 分钟）"
+
+      # 注册表写入失败：任何一次都值得看一眼（多为权限/锁/版本问题）
+      - alert: HaiEnvRegistryWriteFailure
+        expr: increase(env_registry_write_failures_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: hai-cli-env
+        annotations:
+          summary: "env 注册表写入失败（reason={{ $labels.reason }}）"
+          description: "上传的产物已保留，用户重试 env push 会复用同一目录；请按 reason 排查权限/锁/haienv 版本"
+
+      # N3：注册表读失败（fail-closed）。出现即代表「有环境条目读不出来」，
+      # 相关名字的 push 会被明确拒绝（而不是静默产生重复环境）。
+      - alert: HaiEnvRegistryReadFailure
+        expr: increase(env_registry_read_failures_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: hai-cli-env
+        annotations:
+          summary: "env 注册表读取失败（reason={{ $labels.reason }}）"
+          description: "检查 haienv 版本一致性（启动日志 env path check 的 haienv_version）与 venv.db 完整性；排障见 OPS 手册"
+
+      # 注册耗时劣化（PERF-02 门槛 300ms；histogram 默认桶粒度较粗，这里用 0.5s 兜底）
+      - alert: HaiEnvRegisterSlow
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(env_register_duration_seconds_bucket[5m])) by (le)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: hai-cli-env
+        annotations:
+          summary: "env 注册 P99 > 500ms（PERF-02 门槛 300ms）"

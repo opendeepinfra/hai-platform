@@ -1,4 +1,4 @@
-create table "user_access_token" (
+create table if not exists "user_access_token" (
     "from_user_name" varchar(255) not null,
     "access_user_name" varchar(255) not null,
     "access_token" varchar(255) default null,
@@ -31,5 +31,6 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists trigger_update_user_access_token_updated_at on "user_access_token";
 create trigger trigger_update_user_access_token_updated_at before update on "user_access_token" for each row execute procedure update_user_access_token_updated_at();
 

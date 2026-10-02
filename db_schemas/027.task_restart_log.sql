@@ -1,4 +1,4 @@
-create table "task_restart_log" (
+create table if not exists "task_restart_log" (
     "task_id" integer not null,
     "rule" varchar(2047) not null,
     "reason" varchar(2047) not null,

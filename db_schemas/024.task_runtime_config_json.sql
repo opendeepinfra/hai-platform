@@ -1,4 +1,4 @@
-create table "task_runtime_config"
+create table if not exists "task_runtime_config"
 (
     "task_id" integer null default null,
     "chain_id" varchar(255) null default null,
@@ -11,7 +11,7 @@ create table "task_runtime_config"
     check (not ("task_id" is null and "chain_id" is null)),
     check (not ("task_id" is not null and "chain_id" is not null))
 );
-create index "idx-task_runtime_config-source" on "task_runtime_config" ("source");
+create index if not exists "idx-task_runtime_config-source" on "task_runtime_config" ("source");
 comment on table "task_runtime_config" is '任务额外 config_json 表';
 comment on column "task_runtime_config"."task_id" is 'task_id';
 comment on column "task_runtime_config"."chain_id" is 'chain_id';

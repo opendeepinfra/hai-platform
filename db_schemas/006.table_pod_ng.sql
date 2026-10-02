@@ -1,4 +1,4 @@
-create table "pod_ng" (
+create table if not exists "pod_ng" (
     "task_id" integer not null,
     "pod_id" varchar(255) not null,
     "job_id" integer not null,
@@ -15,7 +15,7 @@ create table "pod_ng" (
     constraint "pri-pod_ng-task_id-pod_id" primary key ("task_id", "pod_id"),
     constraint "unq-pod_ng-node-task_id" unique ("node", "task_id")
 );
-create index "idx-pod_ng-pod_id" on "pod_ng" ("pod_id");
+create index if not exists "idx-pod_ng-pod_id" on "pod_ng" ("pod_id");
 comment on table "pod_ng" is 'pod 表';
 comment on column "pod_ng"."task_id" is '对应的 task_id';
 comment on column "pod_ng"."pod_id" is 'pod 的 id，对应 k8s 的 pod_name';
@@ -58,4 +58,5 @@ begin
     return new;
 end;
 $$ language 'plpgsql';
+drop trigger if exists update_pod_ng_status on "pod_ng";
 create trigger update_pod_ng_status before update of "status" on "pod_ng" for each row execute procedure update_pod_status();

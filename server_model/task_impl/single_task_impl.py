@@ -8,7 +8,7 @@ from munch import Munch
 
 from api.task_schema import TaskSchema
 from base_model.base_task import ITaskImpl
-from conf import CONF, FileType
+from conf import CONF, FileType, get_user_env_dir
 from conf.flags import TASK_TYPE, EXP_STATUS, QUE_STATUS
 from db import redis_conn, MarsDB
 from logm import logger
@@ -57,8 +57,9 @@ class SingleTaskImpl(ITaskImpl, ABC):
             'MARSV2_NB_GROUP': self.task.group,
             'WORLD_SIZE': str(self.task.nodes),
             'MARSV2_SERVER': 'http://' + os.environ['MARSV2_SERVER'],
-            'MARSV2_VENV_PATH': f'/hf_shared/hfai_envs/{self.task.user_name}',  # 环境变量暂时保留
-            'HAIENV_PATH': f'/hf_shared/hfai_envs/{self.task.user_name}',
+            # HAIENV_PATH = dirname 的同源单点定义（设计 docs/haiplatform/env/env-server-design.md §3.4 / ADR-E3）
+            'MARSV2_VENV_PATH': get_user_env_dir(self.task.user_name),  # 环境变量暂时保留
+            'HAIENV_PATH': get_user_env_dir(self.task.user_name),
             'MARSV2_BFF_URL': CONF.try_get(f'server_url.bff.{self.task.user.role}'),
             # git 相关 env
             'MARSV2_GIT_REMOTE_REPO': self.task.config_json.get('git_remote_repo', ''),
@@ -156,7 +157,9 @@ class SingleTaskImpl(ITaskImpl, ABC):
                 hf_env_name = hf_env_name.split('-')[1]
                 hf_env_owner = ''
             source_cmd = f'source haienv {hf_env_name}' + (f' -u {hf_env_owner}' if hf_env_owner else '')
-            source_cmd = f'{source_cmd} || echo "no valid env found"'
+            # FR-11：失败时输出可诊断信息（环境名 / owner / 搜索根），但**不改变任务成败语义**
+            source_cmd = (f'{source_cmd} || echo "no valid env found: env={hf_env_name} '
+                          f'owner={hf_env_owner or self.task.user_name} HAIENV_PATH=$HAIENV_PATH"')
         else:
             source_cmd = ''
         if str(watchdog_time := task_schema.options.get('watchdog_time', '')).isdigit():

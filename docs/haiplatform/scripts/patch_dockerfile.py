@@ -68,10 +68,14 @@ RULES = [
         r'setuptools==62\.6\.0',
     ),
     # 5) hai-studio 从 assets 复制（拆成两步，避免多行空白差异）
+    #    同时把这一条 pip 也钉到 tuna 源：103 直连 files.pythonhosted.org 会 ReadTimeout
+    #    （2026-10-02 实测：构建在 base 10/10 因 urllib3 ReadTimeoutError 失败，与代码改动无关）
     (
         r"RUN pip install jupyterlab_hai_platform_ext && \\\n",
         "RUN --mount=type=bind,from=assets,target=/tmp/assets \\\n"
-        "  pip install jupyterlab_hai_platform_ext && \\\n",
+        "  pip install jupyterlab_hai_platform_ext \\\n"
+        "    --index-url=https://pypi.tuna.tsinghua.edu.cn/simple \\\n"
+        "    --trusted-host=pypi.tuna.tsinghua.edu.cn --retries 5 --timeout 60 && \\\n",
         r"  pip install jupyterlab_hai_platform_ext",
     ),
     (

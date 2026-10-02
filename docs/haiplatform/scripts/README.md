@@ -94,7 +94,8 @@ sudo kubectl -n hai-platform exec hai-platform-0 -- \
 | [patch_env_override.py](patch_env_override.py) | 幂等写入运行时配置：`env_path`（→ `env_root`）+ `env_push_enabled*` / `env_name_regex` | `sudo python3 patch_env_override.py` | 103 上 `env_path=/nfs-shared/hai-platform/workspace` |
 | [mount_env_root.sh](mount_env_root.sh) | 把 `env_root` 挂进**任务容器**（默认任务只挂 `.../workspace/{user}`，共享的 `hfai_envs` 不在其下） | `bash mount_env_root.sh` | 生产应走 `/operating/mount_point/create` |
 | [env_fixture.py](env_fixture.py) | 造测试用 env（真实 `haienv` 包写 `venv.db` + 可用的 `activate` + 探针包 `haienv_probe_unique`） | `sudo python3 env_fixture.py --env-root … --user … --name … [--clean]` | 替代需要 conda/CUDA 的 `haienv create` |
-| [build_cli_local.sh](build_cli_local.sh) | 在宿主机直接构建并安装 `hai-cli` / `haienv` / `haiworkspace` wheel（免 docker） | `bash build_cli_local.sh` | 含 wheel 自检（`hfai/conf/utils.py` 等必须在内） |
+| [build_cli_local.sh](build_cli_local.sh) | 在**目标机**上直接构建并安装 `hai-cli` / `haienv` / `haiworkspace` wheel（免 docker） | `REPO=<源码> HAI_VERSION=<tag> bash build_cli_local.sh` | 含 wheel 自检（`hfai/conf/utils.py` 等必须在内）；版本号取自 `HAI_VERSION` 或源目录 git HEAD |
+| [package_cli_for_host.sh](package_cli_for_host.sh) | **推荐的打包安装入口**：在仓库根按当前提交 `git archive` 干净源码 → 传到目标机 → 构建安装 → 归档 wheel + `SHA256SUMS` + `MANIFEST.txt` | `bash package_cli_for_host.sh [user@host]` | 保证「安装的包 == 某个提交」；产物在目标机 `~/hai-cli-wheels/<short>/` |
 | [deploy_pod_dev.sh](deploy_pod_dev.sh) | **联调快通道**：把源码 tar 进运行中的 `hai-platform-0`（`/high-flyer/code/multi_gpu_runner_server`）并重启 `ugc_server` | `bash deploy_pod_dev.sh` | 只覆盖服务端代码；**任务侧/manager 仍需重建镜像** |
 | [smoke_env.sh](smoke_env.sh) | env 接口冒烟 19 项（API-11/API-13 正常 / 边界 / 幂等 / 越界 / 鉴权 / 注册表反序列化 / `source haienv`） | `bash smoke_env.sh http://10.205.52.200` | 期望 `PASS=19 FAIL=0` |
 | [e2e_env.sh](e2e_env.sh) | 端到端：fixture → `hai-cli env push` → 注册 → 任务内 `source haienv` + 探针 import | `bash e2e_env.sh` | 期望 `PASS=12 FAIL=0`；需**已部署含 env 实现的镜像** |
@@ -116,8 +117,10 @@ bash ~/hai-platform/docs/haiplatform/scripts/mount_env_root.sh
 # ② 服务端：联调快的用 deploy_pod_dev.sh；要跑任务侧 E2E 必须重建镜像
 bash build_hai.sh <tag> && bash redeploy_local.sh <tag>
 
-# ③ 客户端：构建并安装带 env push 的 hai-cli
-bash ~/hai-platform/docs/haiplatform/scripts/build_cli_local.sh
+# ③ 客户端：构建并安装带 env push 的 hai-cli（在仓库根执行，按当前提交打包）
+#    注意：直接跑 build_cli_local.sh 会用「目标机工作树的 git HEAD」当版本号，
+#    内容靠 rsync 同步时版本号会落后；推荐用 package_cli_for_host.sh
+bash docs/haiplatform/scripts/package_cli_for_host.sh fireflyer@192.168.100.103
 
 # ④ 用例：一条命令跑完全部（L1 单元 + 客户端单测 + L2 接口 + L3 E2E + workspace 回归）
 bash ~/hai-platform/docs/haiplatform/scripts/verify_env.sh

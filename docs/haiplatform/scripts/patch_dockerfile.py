@@ -58,8 +58,8 @@ RULES = [
         r"cp /tmp/assets/ambient\.tar\.gz",
     ),
     # 4) setuptools / setuptools_scm 钉死版本
-    #    注意：103 的工作区 Dockerfile 可能已经打过这个补丁（本地未提交改动），
-    #    这种情况直接跳过（幂等）。
+    #    注意：该钉版本已固化进仓库 Dockerfile（见根目录 Dockerfile），
+    #    对已固化的 Dockerfile 执行时本规则直接跳过（幂等）。
     (
         r'RUN pip install "setuptools_scm[^\n]*\n',
         'RUN pip install "setuptools==62.6.0" "setuptools_scm==6.4.2" '

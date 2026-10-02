@@ -293,6 +293,8 @@ VALUES
       ('marsv2-scripts-{task.id}:task_log_helper.py', '/marsv2/scripts/task_log_helper.py', '{public}', '{}'::varchar[], 'configmap', true, 'add', true),
       ('marsv2-scripts-{task.id}:stop_helper.py', '/marsv2/scripts/stop_helper.py', '{public}', '{}'::varchar[], 'configmap', true, 'add', true),
       ('marsv2-scripts-{task.id}:validate_image.sh', '/marsv2/scripts/validate_image.sh', '{public}', '{}'::varchar[], 'configmap', true, 'add', true),
+      -- 用户自定义镜像的运行期 link 脚本（HC-08）：必须随镜像进入任务 pod，不得依赖手工 kubectl cp
+      ('marsv2-scripts-{task.id}:link_hfai_image.sh', '/marsv2/scripts/link_hfai_image.sh', '{public}', '{}'::varchar[], 'configmap', true, 'add', true),
       ('marsv2-scripts-{task.id}:waiting_for_master.sh', '/marsv2/scripts/waiting_for_master.sh', '{public}', '{}'::varchar[], 'configmap', true, 'add', true),
       ('marsv2-scripts-{task.id}:waiting_pods_done.py', '/marsv2/scripts/waiting_pods_done.py', '{public}', '{}'::varchar[], 'configmap', true, 'add', true),
       ('marsv2-scripts-{task.id}:start_jupyter_with_ext.sh', '/marsv2/scripts/start_jupyter_with_ext.sh', '{public}', '{}'::varchar[], 'configmap', true, 'add', true),

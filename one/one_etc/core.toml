@@ -146,3 +146,38 @@ env_push_enabled_users = []
 env_push_enabled_groups = []
 # 可收紧不可放宽到含 '/'（服务端对含 '/' 的配置会退回内置白名单）
 env_name_regex = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+# 用户自定义镜像（`hai-cli images`）资产在共享盘上的根目录 —— 设计 §3.2 / CFG-02
+# 语义：用户把 tar 包放在 {image_path}/... 下，`images load` 只接受它之下的路径（SEC-01）；
+#       运行期 initContainer 也会把它按同路径挂进来（HFAI_IMAGE_WEKA_PATH 即在此根之下）。
+image_path = '/nfs_shared/image'
+
+# ---------------------------------------------------------------------------
+# 用户自定义镜像（`hai-cli images`）—— 设计 docs/haiplatform/images/images-server-design.md §9.1
+# ---------------------------------------------------------------------------
+[image]
+# 总开关（OPS-01）：false 时 load/update_status/delete 一律返回 FEATURE_DISABLED，list 不受影响
+enabled = false
+# 灰度白名单（组 / 用户）；为空表示不限制
+enabled_groups = []
+enabled_users = []
+# 镜像 URL 第一段；保留默认值但不依赖其可达（CMP-04）
+registry = 'registry.high-flyer.cn'
+# 数据面后端：register（P0 默认，只登记，运行期由 link 脚本真正导入）/ task / registry
+loader_backend = 'register'
+# 可收紧不可放宽到含 '/'（服务端对含 '/' 的配置会退回内置白名单）
+name_regex = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$'
+# load-image initContainer 的基础镜像（Q-6 / ADR-I4）：
+# 必须改成**计算节点本地已有**的镜像，否则会 ImagePullBackOff（103 上内网 registry 不可达）
+load_helper_image = 'docker.io/library/busybox:latest'
+# load-image initContainer 里 /data_local 对应的宿主路径（Q-5；init_manager 会以 DirectoryOrCreate 挂载）
+data_local_path = '/data_local'
+# 运行期 link 脚本访问节点容器运行时的通路（R-2）：按部署环境填写，留空表示不额外挂载
+#   containerd_socket ：节点 containerd socket（MicroK8s: /var/snap/microk8s/common/run/containerd.sock）
+#   runtime_bin_dir   ：提供 ctr 二进制的宿主目录（MicroK8s: /snap/microk8s/current/bin）
+#   runtime_lib_dir   ：宿主 glibc 目录（挂到 /host-lib；宿主 ctr 是**动态链接**的，helper 镜像自带的
+#                       glibc 版本通常不匹配，link 脚本会用 /host-lib 里的 loader 显式运行 ctr）
+#   image_mount_root  ：镜像 tar 所在共享根，按同路径挂进 initContainer（通常等于 image_path）
+containerd_socket = ''
+runtime_bin_dir = ''
+runtime_lib_dir = ''
+image_mount_root = ''

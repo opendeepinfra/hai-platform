@@ -33,6 +33,23 @@ with logger.contextualize(uuid=f'{log_id}.init'):
     custom_k8s_api = get_custom_corev1_api()
 
 
+def _init_container_running(k8s_pod) -> bool:
+    '''
+    initContainer 是否**正在运行**。
+
+    为什么要看这个（本特性新增，分析 §4.6 / 风险 I19）：用户自定义镜像的运行期 link
+    （`link_hfai_image.sh` 把共享盘上的 tar 导入节点 containerd）可能跑几分钟，
+    这段时间 pod 的 phase 仍是 Pending、`Initialized=False`，会被 get_pod_state 判成
+    BUILDING，从而被本看门狗当成「调度不出去」而 stop（`STOP_CODE.UNSCHEDULABLE`）。
+    103 实测：1 GB tar 首次导入需要 >1 分钟，而 `unschedulable_timeout_Ms=1`，
+    任务链因此每 ~110s 重启一次，直到某个 incarnation 的导入恰好跑完才成功。
+    '''
+    for status in (k8s_pod.get('status') or {}).get('initContainerStatuses') or []:
+        if (status.get('state') or {}).get('running') is not None:
+            return True
+    return False
+
+
 @log_stage(log_id)
 def check_unschedulable():
     try:
@@ -53,6 +70,10 @@ def check_unschedulable():
             pod_id = pod_state['details']['pod_name']
             logger.debug(f'unschedulable检查：查询到pod_id为{pod_id}的节点状态为{job_status}')
             if job_status in [EXP_STATUS.CREATED, EXP_STATUS.BUILDING, EXP_STATUS.UNSCHEDULABLE]:
+                if _init_container_running(k8s_pod):
+                    logger.info(f'pod {pod_id} 的 initContainer 正在运行（如自定义镜像导入），'
+                                f'不计入 unschedulable')
+                    continue
                 is_unschedulable = True
                 blocked_pods.append([pod for pod in task.pods if pod.pod_id == pod_id][0])
         if is_unschedulable:

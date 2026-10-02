@@ -29,6 +29,11 @@ class ErrorCode:
     # 注册表**读**失败（fail-closed）：读不出来 ≠ 没注册过，否则会产生重复环境（N3）
     ENV_REGISTRY_READ_FAILED = 'ENV_REGISTRY_READ_FAILED'
     ENV_PATH_MISMATCH = 'ENV_PATH_MISMATCH'
+    # hai-cli images（用户自定义镜像）新增错误码 —— 设计 docs/haiplatform/images/images-server-design.md §4.5
+    IMAGE_TAR_NOT_FOUND = 'IMAGE_TAR_NOT_FOUND'
+    IMAGE_NOT_FOUND = 'IMAGE_NOT_FOUND'
+    IMAGE_NAME_CONFLICT = 'IMAGE_NAME_CONFLICT'
+    ILLEGAL_TRANSITION = 'ILLEGAL_TRANSITION'
 
 
 class WorkspaceError(Exception):

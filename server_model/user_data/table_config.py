@@ -81,7 +81,8 @@ class TrainEnvironmentTable(PublicDataTable,
 class TrainImageTable(PublicDataTable,
     table_cls=AutoTable.AutoBaseTable,
     table_name='train_image',
-    columns=["image_tar", "image", "path", "shared_group", "registry", "status", "task_id", "created_at", "updated_at"],
+    columns=["image_tar", "image", "path", "shared_group", "registry", "status", "task_id",
+             "message", "user_name", "created_at", "updated_at"],
 ):
     pass
 

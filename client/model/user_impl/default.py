@@ -21,3 +21,14 @@ class UserImage(IUserImage):
     async def async_delete(self, image):
         url = f'{mars_url()}/ugc/user/train_image/delete?token={self.user.token}'
         return await async_requests(RequestMethod.POST, url, json={'image': image}, allow_unsuccess=True)
+
+    async def async_push_precheck(self, file, image=None, file_size=None):
+        # 只读接口（API-19）：返回 name / image / image_tar / cloud_path / cluster_path /
+        # exists / registered / max_tar_bytes，供客户端决定是否跳过上传与本地快速失败
+        url = f'{mars_url()}/ugc/user/train_image/push_precheck?token={self.user.token}'
+        payload = {'file': file}
+        if image:
+            payload['image'] = image
+        if file_size:
+            payload['file_size'] = int(file_size)
+        return await async_requests(RequestMethod.POST, url, json=payload, allow_unsuccess=True)

@@ -25,7 +25,8 @@ from conf.utils import FileType, FilePrivacy, DatasetType, SyncDirection, SyncSt
 
 from .context import (get_worker_pools, get_instance_id, get_pod_id,
                       ensure_cloud_storage_configured, check_feature_enabled,
-                      check_env_push_enabled, get_max_files_per_request)
+                      check_env_push_enabled, get_max_files_per_request,
+                      check_image_upload_enabled, image_upload_precheck_required)
 from .errors import WorkspaceError, ErrorCode
 from .status import set_owner, finalize_status
 from .transfer import resumable_download_with_retry, download_callback
@@ -50,9 +51,24 @@ async def submit_to_cluster(user, name: str, file_type: FileType, files,
         # 「已受理任务」的续传，不在这里拦截，避免把在途任务卡死在中间态。
         check_env_push_enabled(user)
 
+    if file_type == FileType.IMAGE:
+        # 上传通道（S8-3）：与 API-01 共用同一个闸门（FR-19 / HC-12）——只挡控制面的一级回滚不成立。
+        check_image_upload_enabled(user)
+        # ADR-I13：本函数对 `*.zip` 会先落到 {cluster_base_path}/.hfai/ 再解包，沿用 workspace 的
+        # 默认 zip 行为会让共享盘上出现 `xxx.tar.zip`，而 `ctr images import` 要的是 tar 本身。
+        if not no_zip:
+            raise WorkspaceError(ErrorCode.INVALID_PARAM,
+                                 'images 上传必须 no_zip=true（tar 不得再被 zip 包裹，ADR-I13）')
+        if image_upload_precheck_required():
+            from .status import image_precheck_done
+            if not await image_precheck_done(user, name):
+                raise WorkspaceError(ErrorCode.INVALID_PARAM,
+                                     f'请先执行 `hai-cli images push` 的预检（name={name}）')
+
     if not name or '/' in name:
-        raise WorkspaceError(ErrorCode.INVALID_PARAM, f'工作区名非法: {name}')
-    if file_type not in (FileType.WORKSPACE, FileType.ENV):
+        label = '镜像条目名' if file_type == FileType.IMAGE else '工作区名'
+        raise WorkspaceError(ErrorCode.INVALID_PARAM, f'{label}非法: {name}')
+    if file_type not in (FileType.WORKSPACE, FileType.ENV, FileType.IMAGE):
         raise WorkspaceError(ErrorCode.INVALID_PARAM, f'不支持同步 {file_type} 类型')
 
     files = list(files or [])

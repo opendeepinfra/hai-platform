@@ -29,6 +29,17 @@ async def issue_sts_token(user, name: str, file_type: FileType,
     if not name or '/' in name:
         raise WorkspaceError(ErrorCode.INVALID_PARAM, f'工作区名非法: {name}')
 
+    if file_type == FileType.IMAGE:
+        # 签发凭证 = 上传通道的入口，必须与 API-05 共用同一个闸门（FR-19 / HC-12）。
+        # 否则 upload_enabled=false 时用户仍能拿到凭证把 tar 写进对象存储（一级回滚不成立）。
+        from .context import check_image_upload_enabled, image_upload_precheck_required
+        check_image_upload_enabled(user)
+        if image_upload_precheck_required():
+            from .status import image_precheck_done
+            if not await image_precheck_done(user, name):
+                raise WorkspaceError(ErrorCode.INVALID_PARAM,
+                                     f'请先执行 `hai-cli images push` 的预检（name={name}）')
+
     try:
         _, cloud_base_path = get_base_path(user.user_name, user.shared_group, name,
                                            file_type, FilePrivacy.GROUP_SHARED)

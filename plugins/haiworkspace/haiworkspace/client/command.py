@@ -45,12 +45,16 @@ async def init(workspace_name, provider):
 @click.option('-t', '--token_expires', required=False, is_flag=False, type=click.IntRange(900, 43200), default=1800, show_default=True, help='从本地上传到云端的sts token有效时间, 单位(s)')
 @click.option('-p', '--part_mb_size', required=False, is_flag=False, type=click.IntRange(10, 10240), default=100, show_default=True, help='从本地上传到云端的分片大小, 单位(MB)')
 @click.option('--proxy', required=False, is_flag=False, default='', help='从本地上传到云端时使用的代理url')
-@click.option('--file_type', required=False, is_flag=False, default='workspace', hidden=True, show_default=True, help='env特定选项: 文件类型 workspace/env')
+@click.option('--file_type', required=False, is_flag=False, default='workspace', hidden=True, show_default=True, help='特定选项: 文件类型 workspace/env/image')
 @click.option('--env_provider', required=False, is_flag=False, default='oss', hidden=True, show_default=True, help='env特定选项: 使用的云端存储服务类别')
 @click.option('--env_local_path', required=False, is_flag=False, default='', hidden=True, show_default=True, help='env特定选项: 本地路径')
 @click.option('--env_remote_path', required=False, is_flag=False, default='', hidden=True, show_default=True, help='env特定选项: 集群路径')
+@click.option('--image_provider', required=False, is_flag=False, default='oss', hidden=True, show_default=True, help='image特定选项: 使用的云端存储服务类别')
+@click.option('--image_local_path', required=False, is_flag=False, default='', hidden=True, show_default=True, help='image特定选项: 本地暂存目录（只含该 tar）')
+@click.option('--image_remote_path', required=False, is_flag=False, default='', hidden=True, show_default=True, help='image特定选项: 对象存储 key 前缀（API-19 的 cloud_path）')
 async def push(force, no_checksum, no_hfignore, no_zip, no_diff, list_timeout, sync_timeout,
-    cloud_connect_timeout, token_expires, part_mb_size, proxy, file_type, env_provider, env_local_path, env_remote_path):
+    cloud_connect_timeout, token_expires, part_mb_size, proxy, file_type, env_provider, env_local_path, env_remote_path,
+    image_provider, image_local_path, image_remote_path):
     """
     推送本地workspace到萤火二号
     """
@@ -58,7 +62,8 @@ async def push(force, no_checksum, no_hfignore, no_zip, no_diff, list_timeout, s
         pushed = await workspace_api.push(force=force, no_checksum=no_checksum, no_hfignore=no_hfignore, no_zip=no_zip, no_diff=no_diff,
             list_timeout=list_timeout, sync_timeout=sync_timeout, cloud_connect_timeout=cloud_connect_timeout, token_expires=token_expires,
             part_mb_size=part_mb_size, proxy=proxy, file_type=file_type, env_provider=env_provider,
-            env_local_path=env_local_path, env_remote_path=env_remote_path)
+            env_local_path=env_local_path, env_remote_path=env_remote_path,
+            image_provider=image_provider, image_local_path=image_local_path, image_remote_path=image_remote_path)
         if not pushed:
             print('推送失败，请稍后重试，或者联系管理员...')
             sys.exit(1)

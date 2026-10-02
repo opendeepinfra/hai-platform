@@ -78,3 +78,26 @@ def finalize_status(index: str, is_upload: bool, phase_or_msg):
     status_recorder.delete(status_key(index, 'progress', is_upload))
     status_recorder.set(status_key(index, 'status', is_upload), phase_or_msg,
                         expires=get_status_ttl_finished())
+
+
+# ---------------------------------------------------------------------------
+# `[image].upload_require_precheck` 的凭证（S8-5）
+#
+# 预检（API-19）是只读接口；当运维把 upload_require_precheck 打开时，API-01/API-05 必须
+# 能确认「这个用户确实刚为这个名字预检过」。用一个短 TTL 的 Redis 标记实现：预检写入、
+# 上传入口校验。默认关闭（false），因此默认路径上没有任何额外状态。
+# ---------------------------------------------------------------------------
+
+IMAGE_PRECHECK_TTL = 1800
+
+
+def image_precheck_key(user, name: str) -> str:
+    return f'{PROVIDER}:image:precheck:{user.user_name}:{name}'
+
+
+async def set_image_precheck(user, name: str, ttl: int = IMAGE_PRECHECK_TTL):
+    await status_recorder.a_set(image_precheck_key(user, name), '1', ttl)
+
+
+async def image_precheck_done(user, name: str) -> bool:
+    return bool(await status_recorder.a_get(image_precheck_key(user, name)))

@@ -476,12 +476,14 @@ def get_base_path(username, group, name, file_type, file_privacy: FilePrivacy = 
         cloud_base_path = f'{group}/shared/hfai_envs/{username}/{name}'
         check_is_subpath(env_root, cluster_base_path)
     elif file_type == FileType.IMAGE:
-        # 用户自定义镜像共享根（设计 docs/haiplatform/images/images-server-design.md §3.2 / CFG-03）：
-        #   cluster: {image_root}/{name}   ← 镜像 tar 在共享盘上的位置
-        #   cloud  : 不参与对象存储同步（tar 由用户直接放共享盘），保持空串
+        # 用户自定义镜像共享根（设计 docs/haiplatform/images/images-server-design.md §3.2/§3.5，S8-1）：
+        #   cluster: {image_root}/{name}                        ← tar 在共享盘上的落点目录（Q-9「目录 + tar」）
+        #   cloud  : {group}/shared/images/{username}/{name}    ← S3 key 前缀，同时也是 STS 授权前缀（Q-10 / SEC-08）
+        # 上传通道（`images push`）落盘即 {cluster_base_path}/<file>.tar，随后由 API-15 登记。
+        # 手工放盘（兼容旁路）不使用 cloud 侧，因此这里给出非空前缀不会改变既有 load 语义。
         image_root = get_image_root()
         cluster_base_path = f'{image_root}/{name}'
-        cloud_base_path = ''
+        cloud_base_path = f'{group}/shared/images/{username}/{name}'
         check_is_subpath(image_root, cluster_base_path)
     elif file_type == FileType.DATASET:
         # 本地数据集根目录, public

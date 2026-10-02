@@ -75,6 +75,8 @@ if 'ugc' in REG_SERVERS:
     app.post('/ugc/user/train_image/load')(ares_image.hfai_image_load)
     app.post('/ugc/user/train_image/update_status')(ares_image.hfai_image_update_status)
     app.post('/ugc/user/train_image/delete')(ares_image.hfai_image_delete)
+    # API-19 上传预检（S8-5 / Q-11）：images push 前先拿落点、幂等判定与容量上限
+    app.post('/ugc/user/train_image/push_precheck')(ares_image.hfai_image_push_precheck)
 
     app.post('/ugc/cloud/cluster_files/list')(ar_cloud_storage.list_cluster_files)
 

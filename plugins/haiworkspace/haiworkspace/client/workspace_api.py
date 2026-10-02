@@ -107,7 +107,8 @@ async def get_wc_with_check():
 
 async def push(force: bool = False, no_checksum: bool = False, no_hfignore: bool = False, no_zip: bool = False, no_diff: bool = False,
     list_timeout: int = 300, sync_timeout: int = 300, cloud_connect_timeout: int = 120, token_expires: int = 1800, part_mb_size: int = 100,
-    proxy: str = '', file_type: str = FileType.WORKSPACE, env_provider: str = 'oss', env_local_path: str = '', env_remote_path: str = ''):
+    proxy: str = '', file_type: str = FileType.WORKSPACE, env_provider: str = 'oss', env_local_path: str = '', env_remote_path: str = '',
+    image_provider: str = 'oss', image_local_path: str = '', image_remote_path: str = ''):
     """
     推送本地workspace到集群
     @param force: 是否强制推送
@@ -128,6 +129,17 @@ async def push(force: bool = False, no_checksum: bool = False, no_hfignore: bool
         # `source haienv <name>` 会报 `<prefix>/activate: No such file or directory`（环境不可用）。
         # conda 生成的 activate 用 `${BASH_SOURCE[0]}` 推导环境自身路径，因此换到集群路径仍然可用；
         # 只有 `PIP_CONFIG_FILE` / `PYTHONUSERBASE` 仍指向创建时的绝对路径（不影响 source 与 import）。
+        exclude_list = []
+    elif file_type == FileType.IMAGE:
+        # images 上传（S8-4）：与 ENV 同一条适配 —— 不走 workspace.yml，路径与名字全部由调用方给定。
+        #   local_path  = 只含该 tar 的暂存目录（push 按目录 diff，必须正好一个文件）
+        #   remote_path = **对象存储 key 前缀**（API-19 返回的 cloud_path，
+        #                 形如 {group}/shared/images/{user}/{name}），必须与服务端
+        #                 get_base_path(..., FileType.IMAGE) 的 cloud_base_path 逐字节一致，
+        #                 否则 stage2 在对象存储里找不到文件（HC-11 的「三处白名单」之一）
+        #   name        = 镜像条目名（= basename(remote_path)），同时是共享盘落点目录名
+        # 注：images 的 no_zip 由调用方强制为 True（ADR-I13），此处不做默认值改写，保持入口透明。
+        provider, local_path, remote_path, name = image_provider, image_local_path, image_remote_path, os.path.basename(image_remote_path)
         exclude_list = []
     else:
         print(f'不支持的file_type: {file_type}')

@@ -34,6 +34,8 @@ class ErrorCode:
     IMAGE_NOT_FOUND = 'IMAGE_NOT_FOUND'
     IMAGE_NAME_CONFLICT = 'IMAGE_NAME_CONFLICT'
     ILLEGAL_TRANSITION = 'ILLEGAL_TRANSITION'
+    # 上传通道（S8）：单个 tar 超过 [image].max_tar_bytes（OPS-07，前置快速失败）
+    IMAGE_TAR_TOO_LARGE = 'IMAGE_TAR_TOO_LARGE'
 
 
 class WorkspaceError(Exception):

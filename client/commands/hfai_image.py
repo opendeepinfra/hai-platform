@@ -5,14 +5,23 @@ from rich.console import Console
 from rich.box import ASCII2
 from rich.table import Table
 
-from hfai.client.api.image_api import fetch_images, load_image_tar, delete_image_by_name
+from hfai.client.api.image_api import (fetch_images, load_image_tar, delete_image_by_name,
+                                      push_image_tar)
 from .utils import HandleHfaiGroupArgs, HandleHfaiCommandArgs
+
+# 与 image_api 一致的失败提示前缀（服务端业务失败不打印裸异常栈，FR-12 / I10）
+_PUSH_ERROR_PREFIX = '\033[1;35m ERROR: \033[0m'
 
 
 @click.group(cls=HandleHfaiGroupArgs)
 def images():
     """
     用户自定义镜像的管理接口
+
+    主路径：`hai-cli images push <本地 tar>`：把本地 `docker save` 出来的 tar 上传到集群共享盘，
+    成功后自动登记；随后 `hai-cli images list` 查看状态，并可用 `-i registry/<组>/<镜像>:<tag>` 提交任务。
+
+    兼容旁路：手工把 tar 放到集群共享目录之后，用 `hai-cli images load <集群上的 tar 路径>` 登记。
     """
     pass
 
@@ -82,6 +91,28 @@ async def list_images(show_all=False):
     console.print(user_table)
 
 
+@images.command(cls=WorkspaceHandleHfaiCommandArgs, name='push')
+@click.argument('image_tar', required=True, metavar='image_tar')
+@click.option('-i', '--image', 'image', required=False, default=None,
+              help='镜像名 name:tag（不含 "/"）；缺省由 tar 文件名派生，服务端不会自动补 tag')
+@click.option('--force', 'force', required=False, is_flag=True, default=False, show_default=True,
+              help='忽略「已在集群且已登记」的判定强制重传（同名不同内容时必须使用）')
+@click.option('--no-load', 'no_load', required=False, is_flag=True, default=False, show_default=True,
+              help='只上传到集群共享盘，不自动登记（之后可手动执行 images load）')
+async def push_image(image_tar, image=None, force=False, no_load=False):
+    """
+    把本地镜像 tar 包上传到集群共享盘（复用对象存储通道），上传成功后自动登记
+
+    这是准备自定义镜像的**主路径**；tar 包在本地即可（不需要先手工放到集群共享目录）。
+    """
+    result = await push_image_tar(image_tar, image=image, force=force, no_load=no_load)
+    if result.get('success') == 1:
+        print(result.get('msg', '操作完成'))
+        return
+    print(f'{_PUSH_ERROR_PREFIX}{result.get("msg") or "上传失败"}')
+    raise SystemExit(1)
+
+
 @images.command(cls=WorkspaceHandleHfaiCommandArgs, name='load')
 @click.argument('image_tar', required=True, metavar='image_tar')
 @click.option('-i', '--image', 'image', required=False, default=None,
@@ -90,7 +121,10 @@ async def list_images(show_all=False):
               help='该 tar 的镜像记录已被删除时，强制重新加载')
 async def load_image(image_tar, image=None, force=False):
     """
-    加载镜像 tar 包到萤火二号上，tar包应该在萤火二号上共享目录下的，外部用户需要先把 tar 包上传上来操作
+    登记一个**已经在集群共享目录里**的镜像 tar 包（兼容旁路）
+
+    常规做法是 `hai-cli images push <本地 tar>`（上传 + 登记一条命令完成）；
+    只有在运维已经手工把 tar 放到共享盘、或需要修复登记时，才使用本命令。
     """
     if os.path.exists(image_tar):
         abs_image_tar = os.path.abspath(image_tar)

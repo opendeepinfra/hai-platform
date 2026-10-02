@@ -357,6 +357,62 @@ def check_image_enabled(user):
                                  f'用户 {user.user_name} 所在用户组不在镜像功能白名单内')
 
 
+# ---------------------------------------------------------------------------
+# 上传通道（`images push`，S8）—— 设计 §9.1 / §9.5、需求 FR-19 / OPS-06 / OPS-07
+#   [image] upload_enabled            上传开关（默认 true）：只挡上传，不挡控制面
+#   [image] max_tar_bytes             单 tar 上限（默认 0 = 不限制）
+#   [image] upload_require_precheck   是否强制先走 API-19 预检（默认 false）
+# ---------------------------------------------------------------------------
+
+def image_upload_enabled() -> bool:
+    '''上传通道开关（OPS-06）：与 enabled 分开，关闭后 load/list/delete 仍可用。'''
+    return bool(cfg('image.upload_enabled', default=True))
+
+
+def check_image_upload_enabled(user):
+    '''
+    上传通道的统一闸门（FR-19 / HC-12）：先过 `enabled` 灰度，再看 `upload_enabled`。
+
+    API-01（签发凭证）与 API-05（提交落盘）**都必须**调用本函数：只挡控制面的一级回滚
+    不成立（env 特性 N4 的教训——凭证签发同样是数据面入口）。
+    '''
+    check_image_enabled(user)
+    if not image_upload_enabled():
+        raise WorkspaceError(ErrorCode.FEATURE_DISABLED, '镜像上传功能未开放')
+
+
+def get_image_max_tar_bytes() -> int:
+    '''单个 tar 的大小上限（OPS-07）；0 = 不限制。非法配置按 0 处理（fail-open 到不限制）。'''
+    try:
+        value = int(cfg('image.max_tar_bytes', default=0) or 0)
+    except Exception:
+        value = 0
+    return max(0, value)
+
+
+def check_image_max_tar_bytes(size) -> None:
+    '''
+    超限快速失败（TC-UP-10）：`size` 为客户端声明的字节数；未声明（None/0）时不判定。
+    判据放在**上传之前**（API-19 预检 + 客户端本地校验），避免「传完才发现超限」。
+    '''
+    limit = get_image_max_tar_bytes()
+    if limit <= 0 or not size:
+        return
+    try:
+        size = int(size)
+    except Exception:
+        raise WorkspaceError(ErrorCode.INVALID_PARAM, f'非法的 file_size: {size}')
+    if size > limit:
+        raise WorkspaceError(
+            ErrorCode.IMAGE_TAR_TOO_LARGE,
+            f'镜像 tar 大小 {size} 超过上限 {limit}（[image].max_tar_bytes），已拒绝上传')
+
+
+def image_upload_precheck_required() -> bool:
+    '''是否需要先走 API-19 预检才能上传（设计 §9.1，默认 false）。'''
+    return bool(cfg('image.upload_require_precheck', default=False))
+
+
 def image_self_check() -> dict:
     '''
     启动自检（CFG-04）：image_root 存在且可写、registry 已配置、loader_backend 合法、

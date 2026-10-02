@@ -139,6 +139,84 @@ async def hfai_image_delete(request: Request, user=Depends(get_ugc_user)):
     return {'success': 1, 'msg': f'已删除 {result["deleted"]} 个镜像记录', **result}
 
 
+# --------------------------------------------------------------------------- API-19（S8-5 上传预检）
+
+async def hfai_image_push_precheck(request: Request, user=Depends(get_ugc_user)):
+    '''
+    上传预检（API-19，FR-18 / Q-11）：**只读**接口，用于落点协商 + 幂等判定 + 容量上限。
+
+    出参：{'success': 1, 'name', 'image', 'file', 'image_tar', 'cloud_path', 'cluster_path',
+           'exists', 'registered', 'max_tar_bytes', 'msg'}
+
+    - `cloud_path` 必须原样作为客户端 push 的远端 key 前缀（stage1 写对象存储的 key 前缀
+      与服务端 stage2 读取时的 `cloud_base_path` 必须逐字节一致，否则 stage2 找不到对象）；
+    - `cluster_path` 是共享盘落点目录，最终文件 = `{cluster_path}/{file}`；
+    - `exists` / `registered` 供客户端跳过重复上传（`--force` 可覆盖）；
+    - `file_size`（或 `size`）声明本地 tar 字节数时，超限在此**快速失败**（OPS-07 / TC-UP-10）。
+    '''
+    params = await _params(request)
+
+    from cloud_storage.service.context import (check_image_upload_enabled, check_image_max_tar_bytes,
+                                               get_image_max_tar_bytes)
+    from cloud_storage.service.status import set_image_precheck
+    from cloud_storage.utils import get_base_path, check_is_subpath
+    from conf.utils import (FileType, FilePrivacy, derive_image_name, is_valid_image_name)
+
+    try:
+        check_image_upload_enabled(user)
+
+        filename = str(params.get('file') or '').strip()
+        if (not filename or filename in ('.', '..') or '/' in filename or '\\' in filename
+                or os.path.basename(filename) != filename):
+            raise WorkspaceError('INVALID_PARAM', f'非法的镜像文件名: {params.get("file")}')
+
+        image = str(params.get('image') or '').strip() or derive_image_name(filename)
+        if not is_valid_image_name(image):
+            raise WorkspaceError('INVALID_PARAM', f'非法的镜像名: {image}')
+
+        # 落点目录名 = 镜像条目名（Q-9「目录 + tar」/ Q-10）
+        name = image
+
+        check_image_max_tar_bytes(params.get('file_size') or params.get('size'))
+
+        try:
+            cluster_base_path, cloud_base_path = get_base_path(
+                user.user_name, user.shared_group, name, FileType.IMAGE, FilePrivacy.GROUP_SHARED)
+        except Exception as e:
+            raise WorkspaceError('INVALID_PARAM', str(e))
+
+        image_tar = os.path.join(cluster_base_path, filename)
+        check_is_subpath(cluster_base_path, image_tar)   # SEC-09 / HC-13 兜底
+
+        exists = os.path.isfile(image_tar)
+        registered = False
+        try:
+            rows = await user.image.async_get_user_images()
+            registered = any(r.get('image') == image and r.get('status') == 'loaded'
+                             for r in (rows or []))
+        except Exception as e:
+            # 预检是只读的，查不到注册状态不应阻断上传（按未注册处理，客户端会继续传）
+            logger.warning(f'[IMAGE] push_precheck 查询注册状态失败（按未注册处理）: {e}')
+
+        # `upload_require_precheck=true` 时的凭证（默认关闭，见 cloud_storage/service/status.py）
+        await set_image_precheck(user, name)
+
+        msg = ('该 tar 已在集群且已登记，可直接提交任务'
+               if (exists and registered) else
+               ('该 tar 已在集群，上传可跳过' if exists else '需要上传'))
+        logger.info(f'[IMAGE] push_precheck user={user.user_name} name={name} image={image} '
+                    f'file={filename} exists={exists} registered={registered} '
+                    f'cluster={cluster_base_path} cloud={cloud_base_path}')
+        return {'success': 1, 'name': name, 'image': image, 'file': filename,
+                'image_tar': image_tar, 'cloud_path': cloud_base_path,
+                'cluster_path': cluster_base_path, 'exists': exists,
+                'registered': registered, 'max_tar_bytes': get_image_max_tar_bytes(), 'msg': msg}
+    except WorkspaceError as e:
+        logger.warning(f'[IMAGE] push_precheck 失败 user={user.user_name} '
+                       f'file={params.get("file")} code={e.code} msg={e.msg}')
+        raise
+
+
 # --------------------------------------------------------------------------- OPS-01 启动自检
 
 async def startup_image_check():

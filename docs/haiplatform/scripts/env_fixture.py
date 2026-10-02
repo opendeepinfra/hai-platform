@@ -27,12 +27,16 @@ PROBE_VALUE = 'env-push-ok'
 ACTIVATE_TEMPLATE = '''#!/usr/bin/env bash
 # haienv 测试 fixture 生成的 activate（功能等价于 conda prefix 的 activate 对本场景的作用）
 # 真实环境由 `haienv create` + conda 生成；这里只需要保证 source 之后环境真正生效。
+#
+# 关键：环境自身路径必须**可重定位**（用 BASH_SOURCE 推导），与 conda activate 的行为一致——
+# 本地创建的环境被 push 到集群后，绝对路径会变（本地 /tmp/... → 集群 env_root/...），
+# 写死本地路径的 activate 在集群侧会 import 失败。
 export HF_ENV_NAME="{name}"
 export HF_ENV_OWNER="{user}"
 export HAIENV_FIXTURE="1"
-_HAIENV_FIXTURE_PREFIX="{prefix}"
-export PYTHONPATH="{extra}{prefix}/lib/python{py}/site-packages:{prefix}/lib/python{py}:${{PYTHONPATH}}"
-export PATH="{prefix}/bin:${{PATH}}"
+_HAIENV_FIXTURE_PREFIX="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
+export PYTHONPATH="{extra}${{_HAIENV_FIXTURE_PREFIX}}/lib/python{py}/site-packages:${{_HAIENV_FIXTURE_PREFIX}}/lib/python{py}:${{PYTHONPATH}}"
+export PATH="${{_HAIENV_FIXTURE_PREFIX}}/bin:${{PATH}}"
 echo "user haienv [{name}] loaded"
 '''
 

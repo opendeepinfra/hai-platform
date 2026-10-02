@@ -59,6 +59,11 @@ def _resolve_workspace_bin() -> str:
 def _build_push_cmd(venv_name, local_path, remote_path, provider, force, no_checksum,
                     no_zip, no_diff, list_timeout, sync_timeout, cloud_connect_timeout,
                     token_expires, part_mb_size, proxy):
+    '''
+    `remote_path` 必须是**对象存储的 key 前缀**（形如 `{group}/shared/hfai_envs/{user}/{dir}`），
+    而不是集群文件系统路径 —— 客户端上传时用它拼对象 key（`workspace_util.upload_files`），
+    服务端则用同一个 `get_base_path(..., FileType.ENV)` 推导该前缀去下载。
+    '''
     workspace_bin = _resolve_workspace_bin()
     cmd = [workspace_bin]
     # `hai-cli workspace push` 会派发成 `haiworkspace push`（插件自身就是子命令集合），
@@ -139,9 +144,18 @@ async def push_venv(venv_name, force=False, no_checksum=False, no_zip=False, no_
             'success': 0,
             'msg': '预检失败：集群服务端未返回 env 落盘路径（path 为空），已中止上传，请联系管理员'
         }
+    # C-6：`--env_remote_path` 必须是**对象存储 key 前缀**（cloud_path），不是集群文件系统路径。
+    # 传集群路径会把对象写到 `nfs-shared/...` 这种错误 key 下，服务端 stage2 必然 404。
+    upload_prefix = pre_result.get('cloud_path') or ''
+    if not upload_prefix:
+        return {
+            'success': 0,
+            'msg': '预检失败：集群服务端未返回对象存储前缀（cloud_path），无法确定上传位置；'
+                   '请升级集群服务端到包含该字段的版本后再试'
+        }
 
     # ---------------------------------------------------------------- ② 上传
-    push_cmd = _build_push_cmd(venv_name, item.path, remote_path, provider, force, no_checksum,
+    push_cmd = _build_push_cmd(venv_name, item.path, upload_prefix, provider, force, no_checksum,
                                no_zip, no_diff, list_timeout, sync_timeout, cloud_connect_timeout,
                                token_expires, part_mb_size, proxy)
     if os.system(push_cmd):

@@ -138,10 +138,20 @@ POST /ugc/update_cluster_venv?token=<token>&venv_name=myenv&py=3.8&extend=False
 | --- | --- |
 | 鉴权 | `Depends(get_ugc_user)`(`api/depends/implement.py:110-141`) |
 | 处理 | ① 名称白名单校验;② `extend=True` → 拒绝;③ 计算目标目录(已注册则复用其 `path`,否则取第一个空闲 `{name}_{suffix}`);④ **写权限探测**(见 §4.4) |
-| 成功 | `{'success': 1, 'path': '/hf_shared/hfai_envs/<user>/myenv_0', 'exists': false}` |
+| 成功 | `{'success': 1, 'path': '/hf_shared/hfai_envs/<user>/myenv_0', 'exists': false, 'cloud_path': '<group>/shared/hfai_envs/<user>/myenv_0'}`（`cloud_path` 为实现期新增字段，见下方「实现修正 C-6」） |
 | 失败 | `INVALID_PARAM` / `FEATURE_DISABLED` / `ENV_REGISTRY_NOT_WRITABLE` / `UNAUTHORIZED` |
 | 幂等 | 相同 `venv_name` 返回同一 `path`(`exists=true`) |
 | 兼容 | 旧形态 `?token&venv_name&py`(无 `extend`)必须可用 |
+
+> **实现修正 C-6（必须遵守）**：`--env_remote_path` 在客户端**不是集群文件系统路径，而是对象存储 key 前缀**
+> （`workspace_util.upload_files`：`dst_file = f'{remote_path}/{f.path}'`）。因此 API-11 必须额外返回
+> `cloud_path = get_base_path(..., FileType.ENV)[1]`，客户端用它作 `--env_remote_path`；若误用集群路径，
+> 对象会写到 `nfs-shared/...` 而服务端 stage2 按 `{group}/shared/hfai_envs/...` 读取 → `404 Not Found`。
+> `path` 仍用于展示与 API-13 注册（两者 basename 必须相同，服务端据此推导 `name`）。
+>
+> **实现修正 C-7**：`workspace_api.push` 的 ENV 分支**不能**把 `activate` 放进 `exclude_list` —— 集群侧 env
+> 目录必须自带 activate，否则任务里 `source haienv <name>` 报 `<prefix>/activate: No such file or directory`。
+> conda 生成的 activate 用 `${BASH_SOURCE[0]}` 推导环境自身路径，换到集群路径仍可用。
 
 `path` 的 **basename 即最终目录名**:客户端把它作为 `--env_remote_path` 传入,`workspace_api.push` 取 `os.path.basename(env_remote_path)` 当 `name`(`plugins/haiworkspace/haiworkspace/client/workspace_api.py:126`),服务端 `submit_to_cluster` 再按 `get_base_path` 落盘。因此**只要 §3.3 对齐,API-11 返回的路径与真实落盘路径必然一致**。
 

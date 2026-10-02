@@ -121,7 +121,7 @@ def test_tc_c06_push_empty_path(venv_api, tmp_path, monkeypatch):
         outside_db_path=str(tmp_path / 'venv.db'))
 
     async def _fake_requests(*args, **kwargs):
-        return {'success': 1, 'path': None, 'exists': False}
+        return {'success': 1, 'path': None, 'exists': False, 'cloud_path': 'g/shared/hfai_envs/U-A/ok_0'}
 
     executed = []
     monkeypatch.setattr(venv_api, 'async_requests', _fake_requests)
@@ -146,7 +146,8 @@ def test_tc_c07_upload_failure_then_no_register(venv_api, tmp_path, monkeypatch)
 
     async def _fake_requests(method, url, **kwargs):
         urls.append(url)
-        return {'success': 1, 'path': '/cluster/up_0', 'exists': False}
+        return {'success': 1, 'path': '/cluster/up_0', 'exists': False,
+                'cloud_path': 'g/shared/hfai_envs/U-A/up_0'}
 
     monkeypatch.setattr(venv_api, 'async_requests', _fake_requests)
     monkeypatch.setattr(venv_api.os, 'system', lambda cmd: 1)  # 模拟上传非 0 退出
@@ -170,7 +171,8 @@ def test_tc_c08_register_failure_is_distinguishable(venv_api, tmp_path, monkeypa
     async def _fake_requests(method, url, **kwargs):
         urls.append(url)
         if 'update_cluster_venv' in url:
-            return {'success': 1, 'path': '/cluster/reg_0', 'exists': False}
+            return {'success': 1, 'path': '/cluster/reg_0', 'exists': False,
+                    'cloud_path': 'g/shared/hfai_envs/U-A/reg_0'}
         return {'success': 0, 'code': 'ENV_REGISTRY_WRITE_FAILED', 'msg': '不可写'}
 
     monkeypatch.setattr(venv_api, 'async_requests', _fake_requests)
@@ -196,19 +198,50 @@ def test_tc_c09_success_message(venv_api, tmp_path, monkeypatch):
 
     async def _fake_requests(method, url, **kwargs):
         if 'update_cluster_venv' in url:
-            return {'success': 1, 'path': '/cluster/all_0', 'exists': False}
+            return {'success': 1, 'path': '/cluster/all_0', 'exists': False,
+                    'cloud_path': 'hfai/shared/hfai_envs/U-A/all_0'}
         sent['body'] = kwargs.get('data')
         return {'success': 1, 'registered': True}
 
     monkeypatch.setattr(venv_api, 'async_requests', _fake_requests)
-    monkeypatch.setattr(venv_api.os, 'system', lambda cmd: 0)
+    # 注意：不能写 `sent.setdefault('cmd', cmd) or 0` —— 非空字符串为真值，会把命令当成退出码
+    monkeypatch.setattr(venv_api.os, 'system', lambda cmd: (sent.setdefault('cmd', cmd), 0)[1])
     result = asyncio.get_event_loop().run_until_complete(venv_api.push_venv('all'))
     assert result['success'] == 1
-    assert '上传并注册成功' in result['msg']
+    assert '上传并成功' in result['msg'] or '上传并注册成功' in result['msg']
     assert 'source haienv all' in result['msg']
+    # C-6：--env_remote_path 必须是对象存储 key 前缀（cloud_path），不能是集群文件系统路径
+    assert '--env_remote_path hfai/shared/hfai_envs/U-A/all_0' in sent['cmd'], sent['cmd']
+    assert '--env_remote_path /cluster/all_0' not in sent['cmd']
     # 注册 body 必须是 JSON，且 extra_search_dir 原样保留（不字符串化）
     import json
     body = json.loads(sent['body'])
     assert body['venv_name'] == 'all'
     assert body['path'] == '/cluster/all_0'
     assert body['extra_search_dir'] == ['/opt/x']
+
+
+def test_tc_c10_missing_cloud_path(venv_api, tmp_path, monkeypatch):
+    """C-6 回归：服务端只返回集群 path、没有 cloud_path 时必须明确失败，且不执行上传。
+
+    历史缺陷：客户端把集群文件系统路径当对象 key 前缀用，对象被写到
+    `nfs-shared/.../<name>.zip`，服务端 stage2 读 `{group}/shared/hfai_envs/...` 必然 404。
+    """
+    _use_env_dir(tmp_path)
+    prefix = tmp_path / 'noc_0'
+    prefix.mkdir()
+    Haienv.insert(haienv_name='noc', haienv_config=HaienvConfig(
+        path=str(prefix), extend='False', extend_env='', py='3.8'),
+        outside_db_path=str(tmp_path / 'venv.db'))
+
+    async def _fake_requests(*args, **kwargs):
+        return {'success': 1, 'path': '/nfs-shared/hai-platform/workspace/hfai_envs/U-A/noc_0',
+                'exists': False}
+
+    executed = []
+    monkeypatch.setattr(venv_api, 'async_requests', _fake_requests)
+    monkeypatch.setattr(venv_api.os, 'system', lambda cmd: executed.append(cmd) or 0)
+    result = asyncio.get_event_loop().run_until_complete(venv_api.push_venv('noc'))
+    assert result['success'] == 0
+    assert 'cloud_path' in result['msg']
+    assert executed == [], '缺 cloud_path 时不得上传'

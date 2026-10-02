@@ -57,6 +57,8 @@ log "--- 1) API-11 预检（新环境，应 success=1 + exists=false + path 以 
 curl -s -X POST "${BASE}/ugc/update_cluster_venv?token=${TOKEN}&venv_name=${NAME}&py=3.8&extend=False" -o /tmp/env1.json
 cat /tmp/env1.json >> "${LOG}"; echo >> "${LOG}"
 chk "API-11 新环境" "d['success']==1 and d['exists'] is False and d['path'].endswith('_0') and d['path'].startswith('${USER_ENV}/')" /tmp/env1.json
+# C-6：必须同时返回对象存储 key 前缀（客户端 --env_remote_path），basename 与集群目录名一致
+chk "API-11 返回 cloud_path 且 basename 一致" "d['cloud_path'] and not d['cloud_path'].startswith('/') and d['cloud_path'].endswith('/shared/hfai_envs/${USER_NAME}/${NAME}_0')" /tmp/env1.json
 
 log "--- 2) API-11 旧形态（省略 extend，AC-09）"
 curl -s -X POST "${BASE}/ugc/update_cluster_venv?token=${TOKEN}&venv_name=${NAME}&py=3.8" -o /tmp/env2.json
@@ -96,6 +98,18 @@ P=$(sudo python3 "${FIXTURE}" --env-root "${ENV_ROOT}" --user "${USER_NAME}" --n
       --extra-search-dir /opt/x --extra-search-dir /opt/y)
 log "prefix=${P}"
 sudo chmod -R 777 "${P}" "${USER_ENV}" 2>/dev/null || true
+# fixture 是在**宿主机**（NFS 服务端本地路径）上建的，而 API-13 的 os.path.isdir 在 **pod**（NFS 客户端）里执行：
+# NFS 客户端的目录属性/负项缓存（lookupcache=all，最长 acdirmax≈60s）可能让新建目录在 pod 内短暂「看不到」。
+# 这里先等到 pod 侧可见再注册，避免把环境缓存问题误判成产品缺陷。
+log "  等待 pod 侧可见（NFS 属性缓存，最多 70s）..."
+POD_VISIBLE=0
+for _i in $(seq 1 35); do
+  if sudo kubectl -n "${NS:-hai-platform}" exec "${POD:-hai-platform-0}" -- test -d "${P}" 2>/dev/null; then
+    POD_VISIBLE=1; log "  pod 侧可见（第 ${_i} 次探测）"; break
+  fi
+  sleep 2
+done
+[ "${POD_VISIBLE}" = "1" ] || log "  警告：pod 侧 70s 内仍看不到 ${P}"
 
 log "--- 8) API-13 注册（text/plain body，TC-A11/A12）"
 REG_BODY="{\"venv_name\":\"${NAME}\",\"path\":\"${P}\",\"py\":\"3.8\",\"extra_search_dir\":[\"/opt/x\",\"/opt/y\"],\"extra_search_bin_dir\":[\"/opt/bin\"],\"extra_environment\":[\"TEMP=temp\"]}"

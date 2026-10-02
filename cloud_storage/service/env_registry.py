@@ -162,10 +162,33 @@ def _probe_writable(path: str):
 
 # --------------------------------------------------------------------------- API-11 预检
 
+def _cloud_path_for(user, dir_name: str) -> str:
+    '''
+    该 env 对应的**对象存储 key 前缀** = `{group}/shared/hfai_envs/{user}/{dir_name}`
+
+    为什么 API-11 必须把它返回给客户端：客户端的 `--env_remote_path` 不是集群文件系统路径，
+    而是对象存储的 key 前缀（`workspace_util.upload_files` 里 `dst_file = f'{remote_path}/{f.path}'`）。
+    集群侧落盘路径由服务端用同一个 `get_base_path(..., FileType.ENV)` 自行推导
+    （`sync_to_cluster.submit_to_cluster`），两边必须一致（CMP-05：S3 key 布局不变）。
+    '''
+    try:
+        from cloud_storage.utils import get_base_path
+        from conf.utils import FileType
+        _, cloud_base_path = get_base_path(_user_name(user), getattr(user, 'shared_group', '') or '',
+                                           dir_name, FileType.ENV)
+        return cloud_base_path
+    except Exception as e:
+        logger.warning(f'[ENV] 计算 cloud_path 失败 user={_user_name(user)} dir={dir_name}: {e}')
+        return ''
+
+
 def derive_env_path_sync(user, venv_name, py=None, extend=None) -> dict:
     '''
     API-11 领域实现（同步）。只读 + 写权限探测，**不写注册表、不创建 env 目录**。
-    返回 {'path': <集群绝对路径>, 'exists': bool}。
+
+    返回 `{'path': <集群绝对路径>, 'exists': bool, 'cloud_path': <对象存储 key 前缀>}`：
+    - `path`       给客户端做展示与 API-13 注册（集群侧落盘目录）
+    - `cloud_path` 给客户端做 `--env_remote_path`（对象存储 key 前缀，basename 必须等于目录名）
     '''
     check_env_push_enabled(user)
     env_name = validate_env_name(venv_name)
@@ -175,7 +198,9 @@ def derive_env_path_sync(user, venv_name, py=None, extend=None) -> dict:
     if env_name in registry:
         registered_path = getattr(registry[env_name], 'path', None)
         if registered_path:
-            return {'path': registered_path, 'exists': True}
+            dir_name = os.path.basename(os.path.normpath(registered_path))
+            return {'path': registered_path, 'exists': True,
+                    'cloud_path': _cloud_path_for(user, dir_name)}
 
     user_dir = get_user_env_dir(user)
     _probe_writable(user_dir)
@@ -184,7 +209,9 @@ def derive_env_path_sync(user, venv_name, py=None, extend=None) -> dict:
     suffix = 0
     while suffix in used:
         suffix += 1
-    return {'path': os.path.join(user_dir, get_env_dir_name(env_name, suffix)), 'exists': False}
+    dir_name = get_env_dir_name(env_name, suffix)
+    return {'path': os.path.join(user_dir, dir_name), 'exists': False,
+            'cloud_path': _cloud_path_for(user, dir_name)}
 
 
 async def derive_env_path(user, venv_name, py=None, extend=None) -> dict:

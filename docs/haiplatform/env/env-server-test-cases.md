@@ -76,6 +76,10 @@ env_push_enabled_groups = []
 env_name_regex = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 ```
 
+> **L3 用例的硬前提（C-6/C-7 的教训）**：客户端造的「本地 env」必须放在**集群共享盘之外**，
+> 且 push 前清空集群侧同名目录；否则 `haiworkspace push` 会判定「数据已同步」而跳过上传，
+> 对象 key 与 stage2 行为完全测不到。`docs/haiplatform/scripts/e2e_env.sh` 已按此实现。
+
 ### 2.5 env fixture 构造（替代 `haienv create`）
 
 ```bash
@@ -217,7 +221,7 @@ mkdir -p "$PKG"; echo "VALUE = 'env-push-ok'" > "$PKG/__init__.py"
 | TC-C09 | P0 | L3 | TC-C08 之后修复权限 | 重新 `env push` | → 打印"数据已同步,忽略本次操作";仅重试注册;最终 `success=1`;上传字节数 = 0 | FR-06, AC-05 |
 | TC-C10 | P1 | L2 | 基线环境 | `--no_zip --no_diff --force --proxy=...` 组合各传一次 | → 参数正确透传到 `haiworkspace push`(逐项核对命令行) | FR-01 |
 | TC-C11 | P1 | L2 | 基线环境 | 检查 `/tmp/<name>.zip` 是否残留 | → 成功与失败路径均不残留临时 zip(`workspace_util.py:438,445`) | NFR-06 |
-| TC-C12 | P1 | L3 | 真实 S3 | 完整 push 一个含 3 万小文件 + 1 个 1.2 GB 文件的 env | → 分片上传生效;`activate`/`pip.conf` **未上传**(排除项,`workspace_api.py:125-127`);结束后注册成功 | FR-04 |
+| TC-C12 | P1 | L3 | 真实 S3 | 完整 push 一个含 3 万小文件 + 1 个 1.2 GB 文件的 env | → 分片上传生效;**`activate` 必须上传**(C-7:集群侧 env 目录没有 activate 就无法 `source haienv`;`pip.conf` 一并上传);对象 key = `<cloud_path>/<本地目录名>.zip`(C-6);结束后注册成功 | FR-04 |
 
 ### 4.5 REG 组 · 注册表（TC-REG-01~TC-REG-10）
 

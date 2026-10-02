@@ -150,6 +150,8 @@ def test_tc_u04_derive_reuse_registry(user_a):
     result = derive_env_path_sync(user_a, 'myenv', '3.8')
     assert result['exists'] is True
     assert result['path'] == prefix
+    # C-6：cloud_path 是对象存储 key 前缀（客户端 --env_remote_path），basename 必须等于目录名
+    assert result['cloud_path'] == f'{GROUP}/shared/hfai_envs/U-A/myenv_0', result
 
 
 def test_tc_u05_derive_allocates_suffix(user_a):
@@ -159,6 +161,8 @@ def test_tc_u05_derive_allocates_suffix(user_a):
     result = derive_env_path_sync(user_a, 'new1', '3.8')
     assert result['exists'] is False
     assert result['path'] == os.path.join(user_dir, 'new1_1')
+    assert result['cloud_path'] == f'{GROUP}/shared/hfai_envs/U-A/new1_1', result
+    assert os.path.basename(result['cloud_path']) == os.path.basename(result['path'])
     # 预检只读：不得创建任何目录
     assert not os.path.exists(result['path'])
 

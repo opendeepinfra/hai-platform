@@ -88,6 +88,14 @@ if [ -n "${CTR}" ]; then
         log "提示：需要把节点运行时 socket 与 ctr 挂进 initContainer（[image].containerd_socket / runtime_bin_dir，R-2）"
         exit 1
     fi
+    # ctr 是动态链接的 Go 程序：缺 glibc/loader 时必须**显式报错**，
+    # 否则外面只能看到一个 SIGSEGV/SIGFPE（103 实测：只挂 lib 目录会 exit 136）
+    if ! "${CTR}" --version >/dev/null 2>&1; then
+        log "FAILED: ctr 无法执行（${CTR}）—— 通常是宿主 glibc 目录与 loader 未挂进 initContainer"
+        "${CTR}" --version 2>&1 | head -n 3
+        log "提示：检查 [image].runtime_lib_dir 与 [image].runtime_loader_file（MicroK8s: /lib/x86_64-linux-gnu 与 /lib64/ld-linux-x86-64.so.2）"
+        exit 1
+    fi
     # ① 快速幂等短路：运行时已存在该镜像则直接成功
     if "${CTR}" --address "${SOCK}" -n "${NS}" images ls -q 2>/dev/null | grep -qx "${HFAI_IMAGE}"; then
         log "已存在，跳过: ${HFAI_IMAGE}"

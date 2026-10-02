@@ -362,6 +362,8 @@ def create_node_in_k8s(rank, node_schema):
         # 留空表示沿用既有 storage 挂载 / 自带 ctr 的基础镜像。
         containerd_socket = CONF.try_get('image.containerd_socket', default='')
         runtime_bin_dir = CONF.try_get('image.runtime_bin_dir', default='')
+        runtime_lib_dir = CONF.try_get('image.runtime_lib_dir', default='')
+        runtime_loader_file = CONF.try_get('image.runtime_loader_file', default='')
         image_mount_root = CONF.try_get('image.image_mount_root', default='')
         if containerd_socket:
             init_volume_mounts.append(client.V1VolumeMount(
@@ -376,6 +378,21 @@ def create_node_in_k8s(rank, node_schema):
             volumes.append(client.V1Volume(
                 name='runtime-bin',
                 host_path=client.V1HostPathVolumeSource(path=runtime_bin_dir, type='Directory')))
+        if runtime_lib_dir:
+            # 宿主的 ctr 是**动态链接**的（libc/libdl/libpthread）：busybox 自带的 glibc 版本
+            # 与新宿主不同（实测缺少 libdl.so.2，且 loader 混用会 SIGFPE），故把宿主 glibc 目录
+            # 与其 loader 一起挂进来（MicroK8s 上 /lib 是 /usr/lib 的符号链接）。
+            init_volume_mounts.append(client.V1VolumeMount(
+                name='runtime-lib', mount_path='/lib/x86_64-linux-gnu', read_only=True))
+            volumes.append(client.V1Volume(
+                name='runtime-lib',
+                host_path=client.V1HostPathVolumeSource(path=runtime_lib_dir, type='Directory')))
+        if runtime_loader_file:
+            init_volume_mounts.append(client.V1VolumeMount(
+                name='runtime-loader', mount_path='/lib64/ld-linux-x86-64.so.2', read_only=True))
+            volumes.append(client.V1Volume(
+                name='runtime-loader',
+                host_path=client.V1HostPathVolumeSource(path=runtime_loader_file, type='File')))
         if image_mount_root:
             # 镜像 tar 按**同一路径**挂进 initContainer（HFAI_IMAGE_WEKA_PATH 就在这个根之下）
             init_volume_mounts.append(client.V1VolumeMount(

@@ -157,3 +157,54 @@ bash ~/hai-platform/docs/haiplatform/scripts/e2e_env.sh
 | `env push` 明明改了环境却提示「数据已同步」 | 本地 env 目录与集群落盘目录是同一个（共享盘）；E2E 必须把本地放在共享盘之外（`e2e_env.sh` 默认 `/tmp/hai-env-e2e`） |
 | 启动日志没有 `env path check` | `api/register/implement.py` 的 ugc 段缺 `startup_env_check` 注册，或看的是别的 server 日志 |
 
+---
+
+## 6. `hai-cli images`（用户自定义镜像）—— 现状基线探测
+
+> 配合阅读：[hai-cli-images-analysis.md](../images/hai-cli-images-analysis.md)（§9 实测原始输出） ·
+> [images-server-design.md](../images/images-server-design.md) ·
+> [images-server-test-cases.md](../images/images-server-test-cases.md)（§5 E2E-01 是端到端判据）
+
+**本特性尚未开工**，因此本节的脚本**只做只读探测**：固化「现状基线」，并在实施后作为最小回归重跑。
+
+| 脚本 | 用途 | 用法 | 是否需要凭据 |
+| --- | --- | --- | --- |
+| [probe_images.sh](probe_images.sh) | `images` 现状基线探测：命令面 / 4 条接口 HTTP 码 / `train_image` 行数 / **运行面前置（`link_hfai_image.sh` 是否存在、`storage` 挂载种子、节点 `/data_local`、busybox 引用）** / 两个 `AttributeError` 复现 | `bash probe_images.sh [base_url]` | 复用本机 `~/.hfai/conf.yml` 的 token；节点探测需 `multipass` |
+
+**现状期望（实施前）**：`/ugc/user/train_image/list` → 200 且 `user_images: []`；
+`load` / `update_status` / `delete` → **404**；`train_image` → **0 行**；
+`marsv2/scripts/link_hfai_image.sh` → **不存在**；节点 `/data_local` → **不存在**；
+`images load` / `images delete` → **`AttributeError`**。
+
+**已实测基线（2026-10-02，103）**：`PASS=4 FAIL=6`，失败项固定为
+① `link_hfai_image.sh` 不存在；② `one/hai-up.sh` 未登记挂载种子；
+③ 节点 `/data_local` 不存在；④ 节点无 `registry.high-flyer.cn/google_containers/busybox:latest`；
+⑤ `images load` 抛 `AttributeError`；⑥ `images delete` 抛 `AttributeError`。
+（前 4 项来自 §5 运行面前置，后 2 项来自 §6 客户端缺陷复现。）实施后重跑，期望 **FAIL=0**。
+
+**实施后期望（验收）**：`load` / `delete` / `update_status` → 200；`train_image` 的行出现在 `images list` 里；
+`link_hfai_image.sh` 存在且已被 `storage` 种子登记；节点前置满足；两个 `AttributeError` 消失。
+**端到端验收以 [用例 §5 E2E-01](../images/images-server-test-cases.md) 为准**——必须产出**可区分的任务输出**，
+只看接口 200 **不构成通过**（分析 §5 的教训：S6「逻辑可用但永不通过」）。
+
+> **脚本实现陷阱（供后续扩展脚本的人参考）**：本脚本开启 `set -o pipefail`，**不能**写
+> `cmd | grep -q PATTERN` 做判定 —— `grep -q` 命中后立即退出会让上游收到 `SIGPIPE(141)`，
+> 管道整体被判为失败，从而出现「**匹配到了却走 else**」的假 PASS（本脚本第一版就踩了这个坑，
+> 把两个 `AttributeError` 误报成 PASS）。统一改为 `out="$(cmd 2>&1)"; grep -q PATTERN <<<"$out"`。
+
+### 6.1 images 排障速查
+
+| 症状 | 首查 |
+| --- | --- |
+| `images load` 抛 `AttributeError: 'UserImage' object has no attribute 'async_load'` | 客户端未升级（审计 **C-3**）：`client/model/user_impl/default.py` 是否已补方法、wheel 是否已重装 |
+| `images load/delete` 返回 `{"success":0,"msg":"Not Found"}` | 服务端未注册路由（**I3**）：`api/register/implement.py` 的 `ugc` 区块、`api.resource.image` 是否被显式导入 |
+| `images list` 的「用户自定义镜像」永远为空 | `server_model/user_impl/user_image/default.py:16` 的 `'user_images': []` 是否已改为真实查询（**I2**）；`train_image` 是否真有行 |
+| 接口 500 且日志含 numpy 编码错误 | `user_images` 出口未归一化（**I8**）：`task_id` 需 `int(...)`、时间列需转字符串 |
+| 同一镜像显示的 `status` 与预期相反（成了「最旧为准」） | `a_find_user_group_images` 是否已按 `updated_at **DESC**` 返回（**I7**） |
+| 任务提交报「不存在镜像 … 或镜像仍在加载」但 `images list` 里看不到 | `user_images` 空（**I2**）+ 无 `status='loaded'` 行（**I4**）——服务端指引当前**必然误导**（契约 K5） |
+| `images load` 报 `PATH_ESCAPE` | `image_tar` 不在 `[cloud.storage.service].image_path` 之下（常见：误传客户端本机路径） |
+| pod 卡在 `Init`，日志 `sh: /marsv2/scripts/link_hfai_image.sh: not found` | **I16**：脚本不存在，或未在 `one/hai-up.sh` 的 `storage` 种子里登记（`init_manager.py:358` 引用了它） |
+| initContainer `ImagePullBackOff` | **I17②**：`registry.high-flyer.cn/google_containers/busybox:latest` 不可达；把 `[image].load_helper_image` 改为节点已有镜像 |
+| pod 因 `/data_local` 挂载失败 | **I17①**：节点无 `/data_local` 且 hostPath **未指定 `type`** → kubelet 不创建；部署侧创建或改 `DirectoryOrCreate`（OPS-04） |
+| 灰度关闭后 `images list` 也报错 | 开关只应作用于 `load/update_status/delete`；`list` 与内建镜像路径**必须不受影响**（OPS-02 / CMP-03） |
+

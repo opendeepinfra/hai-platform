@@ -1,15 +1,17 @@
 # docs/haiplatform · HAI Platform 服务端分析 / 设计文档索引
 
-本目录收录两个 `hai-cli` 子特性的**逆向分析**与**服务端实现设计**文档：
+本目录收录三个 `hai-cli` 子特性的**逆向分析**与**服务端实现设计**文档：
 
 - `hai-cli workspace` —— 工作区同步（客户端已完整、服务端已实现并上线验证）；
-- `hai-cli env` —— 虚拟环境（`haienv`，本地闭环完整、跨端上传链路本次补齐）。
+- `hai-cli env` —— 虚拟环境（`haienv`，本地闭环完整、跨端上传链路本次补齐）；
+- `hai-cli images` —— 用户自定义镜像（`hfai images`，**三段式链路：控制面半成品 / 提交面完整 / 运行面缺一个脚本**）。
 
 ```
 docs/haiplatform/
 ├── README.md          本索引
 ├── workspace/         workspace 特性文档（分析 / 需求 / 设计 / 用例 / Checklist / DB 审计 / 任务清单 / 数据流 / 测试环境）
 ├── env/               env 特性文档（分析 / 需求 / 设计 / 用例 / Checklist）
+├── images/            images 特性文档（分析 / 需求 / 设计 / 用例 / Checklist / 任务列表）
 └── scripts/           部署与验证脚本（见 §3.5）
 ```
 
@@ -28,6 +30,7 @@ docs/haiplatform/
 | 文档 | 内容 | 适用读者 |
 | --- | --- | --- |
 | [hai-cli-workspace-analysis.md](workspace/hai-cli-workspace-analysis.md) | 对现有仓库的逆向分析：客户端插件、服务端半开源现状、9 个 `/ugc/*` 接口契约、10 项风险（F1–F10）、证据索引 | 全体 |
+| [hai-cli-images-analysis.md](images/hai-cli-images-analysis.md) | 对 `hfai images`（用户自定义镜像）的逆向分析：**三段式链路**（控制面 / 提交面 / 运行面）实测盘点、`images load/delete` 的 `AttributeError`（沿用审计 C-3）、`user_images` 硬编码空、`train_image` 表零写入、**运行面 `link_hfai_image.sh` 缺失**、18 项风险（I1–I18）、S1–S10 场景矩阵、103 实测原始输出 | 全体 |
 
 ## 2. 服务端设计交付物（4 件套）
 
@@ -57,6 +60,28 @@ docs/haiplatform/
 联调脚本（`env_fixture.py` / `build_cli_local.sh` / `deploy_pod_dev.sh` / `mount_env_root.sh` /
 `patch_env_override.py` / `smoke_env.sh` / `e2e_env.sh`）见 [scripts/README.md](scripts/README.md) §5。
 
+## 2.6 `hai-cli images` 特性（分析 / 需求 / 设计 / 用例 / Checklist）
+
+按「分析 → 需求 → 设计 → 用例 → 检查」顺序阅读；需求 ID（FR/NFR/SEC/OPS/CMP/HC）、验收 ID（AC-01~AC-14）与用例 ID（TC-*）、检查项 ID（GATE/ENV/CFG/DB/…/ACC）在追溯矩阵中可回溯。
+
+> **与前两个特性最大的不同**：`images` 多了一条**运行期链路**（`launcher.py:144-147` 查表注入 `HFAI_IMAGE_WEKA_PATH`
+> → 计算 pod 的 `link_hfai_image.sh` initContainer），而这条链路**缺一个脚本**（`marsv2/scripts/link_hfai_image.sh`
+> 全仓不存在）。因此本特性的 DoD 不是「接口返回 200」，而是「**自定义镜像能真正跑起一个任务并产出可区分输出**」（AC-01）。
+
+| 文档 | 内容 | 关键章节 |
+| --- | --- | --- |
+| [hai-cli-images-analysis.md](images/hai-cli-images-analysis.md) | **逆向分析**：三段式链路盘点（控制面半成品 / 提交面完整 / 运行面缺脚本）、`images load/delete` 抛 `AttributeError`（审计 C-3）、`user_images` 硬编码 `[]`（I2）、4 个未注册具名桩（I3）、`train_image` 零行零写入（I4）、**运行面 `link_hfai_image.sh` 缺失（I16）+ 103 节点前置实测（I17）**、任务侧 5 条硬契约 K1–K5、S1–S10 场景矩阵、**18 项风险 I1–I18**、103 实测原始输出 | §1 结论速览 · §3 客户端 · §4 服务端 · §4.6 运行面 · §5 场景矩阵 · §6 风险 · §9 实测 |
+| [images-server-requirements.md](images/images-server-requirements.md) | **需求说明**：6 个目标、15 条功能需求、6 条非功能、7 条安全、5 条运维、6 条兼容、**10 条硬约束**、4 个接口（**API-15 `load` / API-16 `update_status` / API-17 `list` 修订 / API-18 `delete`，刻意与 4 个既有桩同名同序**）、状态机、**14 条验收（AC-01~AC-14）**、8 个待确认决策、追溯矩阵 | §3 需求总览 · §4 接口清单 · §5 状态与数据 · §6 DoD · §8 待确认 · §11 追溯矩阵 |
+| [images-server-design.md](images/images-server-design.md) | **程序设计**：概念单点（`image_tar` vs `image` vs `path`）、4 接口契约与错误码、领域层签名与幂等 upsert、三种 loader 后端（`register` P0 默认 / `task` / `registry`）、**运行期 `link_hfai_image.sh` 契约与参考实现**、客户端补 `async_load/async_delete`、缓存一致性（launcher 进程内缓存）、灰度回滚可观测、端到端时序、**10 条 ADR（ADR-I1~I10）**、WBS ≈ **13 人日** | §3 概念与路径单点 · §4 接口契约 · §5 服务端 · §5.4 link 脚本 · §6 客户端 · §7 运行面 · §13 ADR · §14 WBS |
+| [images-server-test-cases.md](images/images-server-test-cases.md) | **功能测试用例**：分层模型（L1–L4）、103（**无内网 registry**）与可选 registry 两套环境、**10 组用例（U/A/P/C/DB/S/F/O/T/L）**、8 个端到端场景（**E2E-01 = 控制面→运行面全链路，必须产出可区分输出**）、8 条故障注入、优先级与回归矩阵（含 workspace/env 回归）、需求↔用例↔验收追溯 | §1 策略 · §2 环境 · §3 总览 · §4 详细用例 · §5 E2E · §6 故障注入 · §7 回归矩阵 |
+| [images-server-checklist.md](images/images-server-checklist.md) | **实施与上线 Checklist**：阶段 0–14（GATE/ENV/CFG/**DB**/DEV/UT/API/E2E/SEC/PERF/OBS/OPS/TASK/CMP/REL/DOC+DEP/RB/POST/ACC —— 本特性**有 DDL**，故用 workspace 的 `DB` 阶段而非 env 的 `REG`）、接口契约快照（附录 A）、冒烟脚本（附录 B）、排障速查（附录 C）、与 workspace/env 组的映射（附录 D） | §1 GATE · §3 DB · §4 DEV · §5 API · §6 E2E · §11 TASK · §17 ACC · 附录 A/B/C/D |
+| [images-server-task-list.md](images/images-server-task-list.md) | **执行视图**：现状实测核对（含 I1–I18）、需求/约束汇总、S0–S7 **文件级**任务（含 `marsv2/scripts/link_hfai_image.sh`、迁移 `035`、节点前置 `/data_local`）、103 两套环境测试任务、待确认决策、**文档间不一致裁决**（审计 §5 缺口矩阵遗漏 images）、里程碑与关键路径 | §1 现状核对 · §3 任务列表 · §4 测试任务 · §5 待确认 · §6 不一致裁决 |
+
+> **与 [hai-cli-client-server-audit.md](hai-cli-client-server-audit.md) 的关系**：审计记录了客户端侧 **C-3**
+> （`images load/delete` 抛 `AttributeError`），但**全文没有出现 `user_images`**、**没有任何 images 的 `S-x`**、
+> §5 缺口矩阵也**没有 images 行**，且**完全未覆盖运行面**（`link_hfai_image` / `HFAI_IMAGE_WEKA_PATH` / launcher 查表注入）。
+> `images` 文档集是这些结论的补充与修订，裁决项见任务列表 §6。
+
 ## 3. 实施视图（需求梳理 + 任务列表）
 
 | 文档 | 内容 | 关键章节 |
@@ -68,7 +93,7 @@ docs/haiplatform/
 
 | 位置 | 内容 |
 | --- | --- |
-| [scripts/](scripts/) | 部署与验证脚本：镜像离线构建（`build_hai.sh` + `patch_dockerfile.py`）、无 registry 凭据时的部署旁路（`redeploy_local.sh`）、RustFS 部署（`deploy_rustfs.sh`）、`[cloud.storage]` 配置生成（`config_cloud_storage.sh`）、接口冒烟（`smoke_ugc.sh`）、7 子命令 E2E（`e2e_workspace.sh`）、S3 语义验证（`rustfs_check.py`）；含用法与排障速查 |
+| [scripts/](scripts/) | 部署与验证脚本：镜像离线构建（`build_hai.sh` + `patch_dockerfile.py`）、无 registry 凭据时的部署旁路（`redeploy_local.sh`）、RustFS 部署（`deploy_rustfs.sh`）、`[cloud.storage]` 配置生成（`config_cloud_storage.sh`）、接口冒烟（`smoke_ugc.sh`）、7 子命令 E2E（`e2e_workspace.sh`）、S3 语义验证（`rustfs_check.py`）、**`hai-cli images` 现状基线探测（`probe_images.sh`）**；含用法与排障速查（§5 env / §6 images） |
 | [../../deploy/terraform/](../../deploy/terraform/) | 测试环境编排快照（Multipass VM → MicroK8s → Hai Platform 三层），从 `hai-install` 复制、剔除本地 state 与凭据 |
 
 ## 4. 一页速览（结论）
@@ -80,6 +105,8 @@ docs/haiplatform/
 5. **生产的三个必答题**：多 worker 恢复互斥（设计 ADR-5）、终态 TTL ≥ 客户端超时（ADR-6）、任务侧 `oss://` 解析与挂载（FR-15/16）。
 6. **数据库：P0 零 DDL 即可支撑**，但有三条访问层硬约束（禁止 `%s::type`、字面 `%` 要写 `%%`、参数只能 tuple + 枚举传 `.value`），且**仓库无自动迁移框架**（`init_postgresql.sh` 只在空库执行 DDL），任何新增表/列必须走人工迁移（DB 审计 §4/§7）。
 7. **`hai-cli env`（haienv）：本地闭环完整，跨端是半成品**——客户端有 4 个本地子命令但**没有 `push`**（`push_venv` 是死代码且枚举必然失败、子进程命令还拼错可执行文件）；服务端**只有任务运行时消费**（`HAIENV_PATH` + `source haienv`），上传端点 `API-11` 只有桩且未注册路由。补齐只需 **3 件事**：入口（`env push` + `.value` + 可执行文件解析）、`env_root` 路径对齐、注册表写入（复用镜像内 `haienv` 包写 `venv.db`），复用既有 `cloud_storage` 传输通道，**不新增 Postgres 表**；规模 ≈6.5 人日（env 分析 §1、设计 §1/§14）。文档已齐：分析 + 需求/设计/用例/检查四件套（§2.5）。
+8. **`hai-cli images`（用户自定义镜像）：三段式链路，三段完成度依次递减**——**① 控制面半成品**：`images list` 能用但服务端 `user_images` **硬编码 `[]`**，`images load/delete` 在客户端即抛 `AttributeError`（审计 **C-3**），服务端 `/ugc/user/train_image/{load,delete}` 实测 **404**，`train_image` 表**零行、零写入路径**；**② 提交面完整**：`registry/group/image:tag` 三段校验 + `status='loaded'` 白名单齐备（并反向定义了 5 条硬契约 K1–K5）；**③ 运行面结构完整但缺关键脚本**：`launcher` 会查表把 `path` 作为 `HFAI_IMAGE_WEKA_PATH` 注入，每个计算 pod 起 busybox initContainer 执行 `/marsv2/scripts/link_hfai_image.sh`，而**该脚本全仓不存在**（`marsv2/scripts/` 无此文件、`one/hai-up.sh` 挂载种子里也没有），且 103 节点上 `/data_local` 不存在、busybox 镜像引用不匹配（分析 §4.6 / §9-8）。
+9. **`images` 的收口只需 4 件事，但 DoD 必须是「跑通一个任务」**——① 填充 `api/resource/image/default.py` 里**已存在的 4 个具名桩**并注册 3 条路由；② `user_images` 接上**已存在但零调用方**的 `TrainImageSelector.a_find_user_group_images`（并按 `updated_at DESC` 返回）；③ 补 `marsv2/scripts/link_hfai_image.sh` + 挂载种子 + 节点前置可配置；④ 客户端补 `async_load`/`async_delete` 并把失败提示从裸异常栈改为打印 `msg`。数据面 P0 选 **`register` 后端**（只登记、真正 import 推迟到 pod 启动时由 link 完成），因此 **103 在没有内网 registry 的条件下也能端到端验证**（AC-09）。**只修控制面不够**：`status='loaded'` 造出来后任务仍会卡在缺失的 link 脚本上（分析 §4.6 R3、风险 I16）。规模 ≈13 人日（设计 §14）。文档已齐：分析 + 需求/设计/用例/检查 + 任务列表（§2.6）。
 
 ## 5. 阅读路径建议
 
@@ -88,6 +115,7 @@ docs/haiplatform/
 - **测试**：任务列表 §4 → 需求 §11 追溯矩阵 → 用例 §1/§4 → Checklist §4/§5。
 - **运维/发布**：设计 §9/§13 → Checklist §2/§10/§11/§12 + 附录 B/C。
 - **`hai-cli env` 特性**：env 分析 §1 结论速览 → §3/§4 现状 → §6 风险（E1–E13）→ 需求 §3/§4 → 设计 §3 路径约定 → §4 接口契约 → §5 服务端 → §6 客户端 → §13 ADR → §14 WBS → 用例 §4/§5 → Checklist §1–§5、§16 + 附录 B/C。
+- **`hai-cli images` 特性**：images 分析 §1 结论速览 → §3 客户端 / §4 服务端 → **§4.6 运行面（务必先读）** → §5 场景矩阵 → §6 风险（I1–I18）→ 需求 §3/§4/§5 → 设计 §3 概念单点 → §4 接口契约 → §5 服务端（含 §5.4 link 脚本）→ §6 客户端 → §7 运行面 → §13 ADR → §14 WBS → 用例 §4/§5（E2E-01 是 AC-01 的唯一判定依据）→ Checklist §1–§6、§11、§17 + 附录 A/C → 任务列表 §1 现状核对 / §3 任务列表 / §6 不一致裁决。
 
 ## 6. 全局横切审计
 

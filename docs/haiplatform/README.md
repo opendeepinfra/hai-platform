@@ -93,6 +93,6 @@ docs/haiplatform/
 
 | 文档 | 内容 | 关键章节 |
 | --- | --- | --- |
-| [hai-cli-client-server-audit.md](hai-cli-client-server-audit.md) | **客户端 / 服务端实现现状审计**：把 `hai-cli` 全部子命令与服务端全部路由（83 条，operating 35 / query 33 / ugc 13 / monitor 2）放在一张表上做「调用 ↔ 注册」差分；`default.py`/`implement.py`/`custom.py` 三层约定与「桩的三种含义」判别规则；**7 条客户端调用缺服务端路由**、33 个 `not implemented` 桩的可达性分类、C-1~C-11 客户端缺陷与 S-1~S-11 服务端缺陷、按 P0–P3 排序的不完整清单、收口顺序建议、复现命令 | §0 结论速览 · §2.3 三层约定 · §3 客户端清单 · §4 服务端清单 · §5 缺口矩阵 · §8 不完整清单 · §9 收口顺序 |
+| [hai-cli-client-server-audit.md](hai-cli-client-server-audit.md) | **客户端 / 服务端实现现状审计**（基线 `d372319`，初版 `b866c10`，文首有变更说明）：把 `hai-cli` 全部子命令与服务端全部路由（**85 条**，operating 35 / query 33 / ugc **15** / monitor 2）放在一张表上做「调用 ↔ 注册」差分；`default.py`/`implement.py`/`custom.py` 三层约定与「桩的三种含义」判别规则；**6 条客户端调用缺服务端路由**、32 个 `not implemented` 桩的可达性分类、C-1~C-11 客户端缺陷与 S-1~S-11 服务端缺陷（含 C-7/C-8 闭环状态表）、按 P0–P3 排序的不完整清单、收口顺序建议、复现命令 | §0 结论速览 · §2.3 三层约定 · §3 客户端清单 · §4 服务端清单 · §5 缺口矩阵 · §7 env 判定 · §8 不完整清单 · §9 收口顺序 |
 
 > 该文档是**横切视角**：`workspace/` 与 `env/` 两套文档是单特性深挖，本文做全局面盘点与交叉验证，结论与二者一致。审计基线 `b866c10`。

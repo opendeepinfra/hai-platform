@@ -8,14 +8,34 @@
 > - 本文是**全局横切审计**：把客户端全部子命令、服务端全部路由放在一张表上做「调用 ↔ 注册」差分，并把散落在各特性文档里的缺口收敛成一份清单。
 > - 三者结论一致，可互为佐证。
 >
-> **审计基线**：`b866c10`（2026-10-02）。审计时工作区含未提交改动：`docs/haiplatform/env/`（新增）与 `docs/haiplatform/README.md`（修改）。
+> **审计基线**：初版 `b866c10`（2026-10-02，当时工作区含未提交的 `docs/haiplatform/env/` 新增与 README 修改）；
+> **本版更新至 `d372319`**（2026-10-02，工作区干净、与 `origin/feature/hai-cli-env-server-design` 同步）。
 >
-> **方法**：只读代码审计，未启动服务、未修改任何文件。三条主线：
-> 1. **AST 级核对**：把 `api/register/implement.py` 注册的 83 条路由逐一解析到处理函数定义，确认「无注册但函数缺失」；
+> **两次基线之间发生了什么**（`git log --oneline b866c10..d372319`，10 个提交）：
+>
+> | 提交 | 内容 | 对本文的影响 |
+> | --- | --- | --- |
+> | `2784551` | env 四件套（分析/需求/设计/用例）+ Checklist | §7 从「缺失」变为「有设计可落地」 |
+> | `a80cdb9` | 本文档 + `docs/haiplatform/README.md` 索引 | —— |
+> | `9de1536` | **env 整链路实现**：`env_registry.py`、API-11/API-13、`env push`、`env_root` 路径单点化 | §2.2/§3.3/§4.1/§4.3/§5/§7 全部更新 |
+> | `bd6be03` | 修 C-6（对象 key 改用 `cloud_path`）/ C-7（ENV 上传不得排除 `activate`） | 新增两条实测缺陷并闭环 |
+> | `c65670c`、`64c0f98` | `haienv create` 支持 CUDA 11.x；改为「告警 + `HAIENV_CUDA_STRICT=1` 严格」 | C-7 由「硬编码不可用」改为「可用（告警式）」 |
+> | `e3b1b8e` | 客户端打包脚本 `package_cli_for_host.sh` | 附录 A 新增 |
+> | `a25da49` | 固化 Dockerfile 的 setuptools 版本 | 与本文无关（构建侧） |
+> | `9f9e86b` | **精简 M3**：N4 数据面开关、N3 幂等/fail-closed、NFS 目录可见性、最小看板、版本兼容提示 | §4.5 S-7 在 env 侧闭环；env 侧新增 N1–N9 台账 |
+> | `d372319` | Checklist 复核（74/133 已勾） | —— |
+>
+> **本次复核方式**：§4.1/§5/§7/附录 C 的数字与判定**在本版基线上重跑了附录 C 的脚本**（路由 83→85、缺口 7→6、
+> 桩 33→32、客户端从不调用的路由仍为 41）；env 实测证据取自 `docs/haiplatform/env/env-server-test-report.md` §5/§9
+> 与 `docs/haiplatform/scripts/verify_env.sh`（103 上 `PASS=8 FAIL=0`）。
+> **未复核**：S-1~S-11、C-3~C-6、C-9~C-11 等与 env 无关的项沿用初版静态审计结论（本版未复跑这些路径，也未改这些代码）。
+>
+> **方法**：以只读代码审计为主，**未修改任何源文件**；本版额外重跑了附录 C 的统计脚本，并引用 103 上的实测证据。三条主线：
+> 1. **AST 级核对**：把 `api/register/implement.py` 注册的路由（初版 83 条，本版 **85 条**）逐一解析到处理函数定义，确认「无注册但函数缺失」；
 > 2. **全量差分**：抓取 `client/**`、`plugins/**`、`base_model/**` 中所有 `mars_url()/...` 调用点，与注册表做程序化差集；
 > 3. **桩可达性判定**：对每个 `default.py` 中返回 `not implemented` 的函数，检查是否被同名 `implement.py` 覆盖、是否被注册为路由。
 >
-> **已验证 / 未验证**：本文所有「完整/桩/缺失」判定均来自代码；**端到端可用性**部分（§6.2）引用仓库内已记录的实测结果（`workspace-server-task-list.md` §8），本文未复跑。
+> **已验证 / 未验证**：本文所有「完整/桩/缺失」判定均来自代码；**端到端可用性**部分（§6.2 引用 `workspace-server-task-list.md` §8；§7 引用 `env/env-server-test-report.md`）来自仓库内已记录的实测结果。
 
 ---
 
@@ -24,15 +44,19 @@
 | 维度 | 判定 | 关键数字 |
 | --- | --- | --- |
 | 客户端核心命令面 | ✅ 基本完整 | 15 个核心子命令 + 2 个插件命令；缺陷见 §3.4（C-1~C-11） |
-| 客户端 `workspace` 插件 | ✅ 主链路已实现并端到端验证 | 7 子命令；枚举字符串化贯穿 |
-| 客户端 `env`（haienv）插件 | ⚠️ 本地完整、**跨端缺失** | 6 个子命令全本地可用；**无 `push`** |
-| 服务端路由 | ✅ 处理函数齐全，无「空注册」 | **83 条**（operating 35 / query 33 / ugc 13 / monitor 2） |
+| 客户端 `workspace` 插件 | ✅ 主链路已实现并端到端验证 | 7 子命令；URL 拼接已统一取 `.value`（余 3 处裸插值见 §3.4 C-1） |
+| 客户端 `env`（haienv）插件 | ✅ **跨端链路已实现并端到端验证** | 7 个子命令（新增 `push`）；C-7/C-8 已闭环 |
+| 服务端路由 | ✅ 处理函数齐全，无「空注册」 | **85 条**（operating 35 / query 33 / ugc **15** / monitor 2） |
 | 服务端 workspace（`/ugc/*`） | ✅ 9 条全部真实实现（非桩） | service 层 + DB + provider 齐备 |
-| 服务端 P1 与部分能力 | ❌ 桩未注册 / 无实现 | 33 个 `not implemented` 桩中，32 个未被覆盖 |
-| 前后端对接 | ⚠️ **7 条客户端调用没有对应路由** | 6 条有桩未注册 + 1 条完全无实现 |
-| 生产可用性的最大未知数 | ❓ 私有 `custom.py` 是否存在并补齐了这些路由 | 本仓 0 个 `custom.py` |
+| 服务端 env（`/ugc/*`） | ✅ 2 条接口（API-11 预检 / API-13 注册）+ **零 DDL** 注册表 | `cloud_storage/service/env_registry.py`、`api/resource/storage/default.py:52,89` |
+| 服务端 P1 与部分能力 | ❌ 桩未注册 / 无实现 | 32 个 `not implemented` 桩中，31 个未被覆盖 |
+| 前后端对接 | ⚠️ **6 条客户端调用没有对应路由**（初版 7 条） | 5 条有桩未注册 + 1 条完全无实现；`/ugc/update_cluster_venv` 已闭环 |
+| 生产可用性的最大未知数 | ❓ 私有 `custom.py` 是否存在并补齐这些路由 / 是否覆盖新的 env 路由 | 本仓 0 个 `custom.py` |
 
-**一句话结论**：客户端与「任务主链路 + workspace」服务端都已成型；不完整集中在 **① 7 条客户端调用缺服务端路由、② env 上传链路整条缺失、③ workspace 的 P1（配额/审计/用量）与崩溃恢复正确性、④ 少量客户端硬 bug**。
+**一句话结论（d372319）**：客户端与「任务主链路 + workspace + **env 上传**」服务端均已成型，且各自有端到端实测；
+不完整集中在 **① 6 条客户端调用缺服务端路由、② workspace 的 P1（配额/用量/审计）与崩溃恢复正确性（S-2）、
+③ 少量客户端硬 bug（C-3/C-5 等）、④ env 侧精简 M3 的剩余项（权限口径 N1/N2、P99 桶粒度 N8、灰度期版本混用 N9）**。
+初版结论中的「env 上传链路整条缺失」已闭环（见 §7）。
 
 ---
 
@@ -69,10 +93,10 @@ plugins/haienv/             → hfai env ... / haienv ...（独立 wheel）
 | 项 | 说明 |
 | --- | --- |
 | App | `api/app.py:43` 唯一 FastAPI 实例（中间件、异常改写、Prometheus） |
-| 路由注册点 | `api/register/implement.py` **全部 83 条**，按 `SERVER` 环境变量分组门控（`:23` operating / `:67` ugc / `:90` query / `:133` monitor） |
-| Server group | `operating`(35) · `query`(33) · `ugc`(13) · `monitor`(2)；启动项见 `one/supervisord.conf` |
+| 路由注册点 | `api/register/implement.py` **全部 85 条**，按 `REG_SERVERS` 分组门控（`:23` operating / `:67` ugc / `:97` query / `:140` monitor） |
+| Server group | `operating`(35) · `query`(33) · `ugc`(**15**：workspace 9 + **env 2** + nodeport/train_image 等) · `monitor`(2)；启动项见 `one/supervisord.conf` |
 | 旁路宿主 | `uvicorn_server.py:24-31`：`cloud-storage` → `cloud_storage.api:app`（旧无前缀实现，900 行）；`log-forest` → `log_forest_server:app` |
-| 事件钩子 | `api/register/implement.py:86-87` 仅在 ugc 组注册 `startup_recover` / `shutdown_workers` |
+| 事件钩子 | `api/register/implement.py:91-94` 仅在 ugc 组注册 `startup_recover` / `shutdown_workers` / **`startup_env_check`（env 路径自检，OPS-01）** |
 
 ### 2.3 ⚠️ 必须理解的「三层文件」约定
 
@@ -169,37 +193,54 @@ xxx/
 
 ### 3.3 插件 `hfai env`（`plugins/haienv/**`）
 
-命令注册：`plugins/haienv/haienv/client/cli.py:19-22` → `create / list / remove / config`；`config` 下 `show / clear / append`（`client/command.py:115/135/153`）。
+命令注册：`plugins/haienv/haienv/client/cli.py:3,19-23` → `create / list / remove / config / **push**`；
+`config` 下 `show / clear / append`（`client/command.py:305/330/349`）。
 
 | 子命令 | 实现 | 状态 | 是否联网 |
 | --- | --- | --- | --- |
-| `create <name>` | `client/command.py:27-45` → `client/api.py:16-133` | ⚠️ 可用但硬编码（缺陷 C-7） | 否（本地 conda） |
-| `list [-u] [-a] [-o json]` | `client/command.py:48-94` → `client/api.py:136-145` | ✅ | 否 |
-| `remove <name>` | `client/command.py:97-104` → `client/api.py:158-170` | ✅ | 否 |
-| `config show` | `client/command.py:115-132` | ✅ | 否 |
-| `config clear` | `client/command.py:135-150` | ✅ | 否 |
-| `config append` | `client/command.py:153-170` | ✅ | 否 |
-| **`push`（上传 venv 到集群）** | **不存在** | ❌ 缺失 | —— |
+| `create <name>` | `client/command.py:180-210` → `client/api.py:16-133` | ✅ 可用（CUDA 11.x 只告警，`HAIENV_CUDA_STRICT=1` 才拦截，见 C-7 状态） | 否（本地 conda） |
+| `list [-u] [-a] [-o json]` | `client/command.py:234-283` → `client/api.py:143-153` | ✅ | 否 |
+| `remove <name>` | `client/command.py:286-292` → `client/api.py:166-175` | ✅ | 否 |
+| `config show` | `client/command.py:305-325` | ✅ | 否 |
+| `config clear` | `client/command.py:330-343` | ✅ | 否 |
+| `config append` | `client/command.py:349-365` | ✅ | 否 |
+| **`push <name>`（上传 venv 到集群）** | `client/command.py:212-230` → `client/api/venv_api.py:135-243`：① API-11 预检 → ② `haiworkspace push` 上传对象存储 → ③ API-13 注册 | ✅ **已实现并端到端实测**（初版为 ❌ 缺失） | 是（预检/注册 + 对象存储） |
 
 **`haienv` 的四种调用形态**（同一套本地数据模型）：① `hfai env <sub>`；② `haienv <sub>`（`plugins/haienv/haienv/haienv` 自造 `/tmp/haienv` 引导脚本）；③ `source haienv <name>`（同一脚本的另一分支，环境加载器）；④ 进程内 `import haienv; haienv.set_env(...)`（`haienv/haienv.py:20-102`）。
 
-**上传链路的唯一实现**在插件之外：`client/api/venv_api.py:10-46` 的 `push_venv`——**全仓无调用方**、未被 `client/api/__init__.py` 导出。其失败链路见缺陷 C-8。
+**上传链路**（初版记为「全仓无调用方」的 `push_venv`）：现已接入 CLI（`command.py:219` 惰性
+`from hfai.client.api.venv_api import push_venv`），并按设计 §6.3 做**分级结果**——`上传失败` /
+`环境已上传但注册失败，可重试` / `上传并注册成功`。`--env_remote_path` 使用 API-11 返回的**对象存储 key 前缀
+`cloud_path`**（该字段缺失即 fail-closed，不再用集群路径兜底）；C-8 的三条失败链已分别闭环（见 §3.4 状态）。
 
 ### 3.4 客户端缺陷汇总
 
 | ID | 缺陷 | 证据 | 影响 |
 | --- | --- | --- | --- |
-| **C-1** | **`FileType` 枚举字符串化**：`class FileType(str, Enum)`（`conf/utils.py:22-34`）经 f-string 插值产出字面量 `FileType.WORKSPACE`，而非 `workspace` | `workspace_api.py:67,101,184-185,196,217`；`workspace_util.py:127,142,150,161,181,241,277`；`venv_api.py:25` | 服务端 `normalize_enum`（`cloud_storage/service/compat.py:25-53`，默认开）能兜住；`legacy_param_compat=false` 时全部 400 |
-| **C-2** | **`file_type == FileType.ENV` 比较恒为 False** | `plugins/haiworkspace/haiworkspace/client/workspace_api.py:125` | env 上传分支客户端侧永不命中，打印「不支持的file_type」 |
+| **C-1**（→ 状态见表后） | **`FileType` 枚举字符串化**：`class FileType(str, Enum)`（`conf/utils.py:22-34`）经 f-string 插值产出字面量 `FileType.WORKSPACE`，而非 `workspace` | `workspace_api.py:67,101,184-185,196,217`；`workspace_util.py:127,142,150,161,181,241,277`；`venv_api.py:25` | 服务端 `normalize_enum`（`cloud_storage/service/compat.py:25-53`，默认开）能兜住；`legacy_param_compat=false` 时全部 400 |
+| **C-2**（→ 状态见表后） | **`file_type == FileType.ENV` 比较恒为 False** | `plugins/haiworkspace/haiworkspace/client/workspace_api.py:125` | env 上传分支客户端侧永不命中，打印「不支持的file_type」 |
 | **C-3** | **`hfai images load/delete` 抛 AttributeError**：调用 `user.image.async_load/async_delete`，但客户端 `UserImage` 只有 `async_get` | `client/api/image_api.py:23,34`；`client/model/user_impl/default.py:5-8`；接口 `base_model/base_user_modules/default.py:20-22` | 两个子命令完全不可用 |
 | **C-4** | `download` 的 `required=True` 与 `default='checkpoint'` 冲突，`remote_path == ''` 判断永不成立 | `plugins/haiworkspace/haiworkspace/client/command.py:100,115` | 默认值失效，仅提示信息问题 |
 | **C-5** | 未知 provider **静默回退 `MockApi`**（返回空结果但 `success:1`） | `plugins/haiworkspace/haiworkspace/client/workspace_util.py:311-315` | 可能「看起来成功但没上传」 |
 | **C-6** | `hfai python` 的 workspace 自动 push 只在 **external 构建**下存在；内部构建被 `patch_client.py` 裁掉 | `client/commands/hfai_python.py:171`；`client/patch_client.py` | 内部模式需手工 `workspace push` 或手写 workspace URI |
-| **C-7** | `haienv create` 硬编码只接受 CUDA 11.1/11.3、需交互 `input()` 确认、`__IS_HF_ENV__` 占位符从未替换 | `plugins/haienv/haienv/client/command.py:41-43`；`client/api.py:34-36,88-118`；`client/script.py:122` | 新镜像上不可用；无法自动化；生成的 `activate` 语义错误 |
-| **C-8** | `push_venv` 三重失败链：① `sys.argv[0]` 拼出 `haienv workspace push`（未知子命令）② `--file_type {FileType.ENV}` 字面量 ③ 目标路由未注册且 `result['path']` 无 None 防御 | `client/api/venv_api.py:22,23,24,25` | env 上传不可用 |
+| **C-7**（→ 状态见表后） | `haienv create` 硬编码只接受 CUDA 11.1/11.3、需交互 `input()` 确认、`__IS_HF_ENV__` 占位符从未替换 | `plugins/haienv/haienv/client/command.py:41-43`；`client/api.py:34-36,88-118`；`client/script.py:122` | 新镜像上不可用；无法自动化；生成的 `activate` 语义错误 |
+| **C-8**（→ 状态见表后） | `push_venv` 三重失败链：① `sys.argv[0]` 拼出 `haienv workspace push`（未知子命令）② `--file_type {FileType.ENV}` 字面量 ③ 目标路由未注册且 `result['path']` 无 None 防御 | `client/api/venv_api.py:22,23,24,25` | env 上传不可用 |
 | **C-9** | 插件非自包含：`workspace_util.py` 依赖的 `.api_config/.api_utils/.utils/.provider` 只在打包时由 `install.sh` 拷入 | `plugins/haiworkspace/install.sh:7-10` | 从源码直接运行/测试会 `ModuleNotFoundError` |
 | **C-10** | `hfai sync` 死代码 | `client/commands/hfai_sync.py:10-20` | 不可达 |
 | **C-11** | `haienv` 包装脚本：`[[ "$2" -ne "-u" ]]` 用算术运算符比较字符串；`cat <<EOF >> $prog` 追加而非截断 | `plugins/haienv/haienv/haienv:5,30` | `-u` 参数校验不可靠；`/tmp/haienv` 残留会累积 |
+
+**缺陷状态更新（`d372319`，只列状态有变化的项）**
+
+| ID | 初版判定 | 现状 | 依据 |
+| --- | --- | --- | --- |
+| C-1 | 枚举字符串化贯穿 | **部分修复**：`workspace_util.enum_value()` 已用于 4 处 URL（`get_sts_token`/`set_sync_status`/`get_sync_status`/`delete_files`），`venv_api.py` 用 `FileType.ENV.value`；**仍有 3 处裸插值** `workspace_util.py:189,249,285`（`list_cluster_files`/`sync_to_cluster`/`sync_from_cluster`），类级隐患未消除（未采用「给 `FileType` 加 `__str__`」的一次性方案） | `f'{FileType.ENV}'` 仍产出 `FileType.ENV`（附录 C 命令 4 可复现）；服务端 `normalize_enum` 继续兜底 |
+| C-2 | `file_type == FileType.ENV` 恒为 False | **已闭环**（env 路径）：客户端现在传字面量 `env`，`'env' == FileType.ENV` 为 True（`str, Enum` 语义）；初版恒 False 的根因是上游传了字符串化的 `FileType.ENV` | `client/api/venv_api.py:112`、`plugins/haiworkspace/.../command.py:48`（CLI 默认值本就是字符串 `'workspace'`） |
+| C-7 | `haienv create` 硬编码 CUDA 11.1/11.3、交互确认、`__IS_HF_ENV__` 未替换 | **部分修复**：CUDA 门禁改为「功能探测 + 告警」（`HAIENV_CUDA_STRICT=1` 可恢复严格）；`__IS_HF_ENV__`/conda 前置仍是既有约束（`create` 需本机 conda） | `plugins/haienv/haienv/client/command.py:57-137`；`tests/env/test_haienv_create_prereq.py`（27 条） |
+| C-8 | `push_venv` 三重失败链（`sys.argv[0]` 拼错子命令 / `--file_type` 字面量 / 目标路由未注册且 `path` 无防御） | **已闭环**：① 显式解析 `haiworkspace` 可执行文件（含主 CLI/插件两种装配）② 传 `--file_type env` ③ 两条路由已注册并实现 + `path`/`cloud_path` 缺失即明确失败且不上传 | `client/api/venv_api.py:29-56,95-133,177-201`；`tests/env/test_client_push.py`（14 条）；103 实测见 §7 |
+| （新增）C-6′ | 集群外 push 用集群文件系统路径当对象 key → 任务侧 404 | **已修复**：API-11 返回 `cloud_path`，客户端以其为 `--env_remote_path` | `cloud_storage/service/env_registry.py:283-302`、`client/api/venv_api.py:192-201` |
+| （新增）C-7′ | ENV 上传排除了 `activate` → 任务内 `source haienv` 报 `No such file or directory` | **已修复**：ENV 分支 `exclude_list = []` | `plugins/haiworkspace/haiworkspace/client/workspace_api.py:125-131` |
+
+> 与初版一致、本次未复核的项：C-3、C-4、C-5、C-6、C-9、C-10、C-11。
 
 ---
 
@@ -210,12 +251,13 @@ xxx/
 | Server group | 路由数 | 门控位置 | 主要用途 |
 | --- | --- | --- | --- |
 | `operating` | 35 | `api/register/implement.py:23` | 任务生命周期、用户/配额/权限管理、节点/挂载点运维 |
-| `query` | 33 | `:90` | 任务/用户/集群/存储查询 |
-| `ugc` | 13 | `:67` | nodeport、train_image、**workspace 9 条** |
-| `monitor` | 2 | `:133` | 性能时序、用户存储 |
+| `query` | 33 | `:97` | 任务/用户/集群/存储查询 |
+| `ugc` | **15** | `:67` | nodeport、train_image、**workspace 9 条** + **env 2 条**（API-11/API-13） |
+| `monitor` | 2 | `:140` | 性能时序、用户存储 |
 | （不分组） | 3 | `api/app.py:280,283` + 条件 `/swagger/*` | metrics / 健康检查 / swagger |
 
-**AST 级核对结果**：83 条注册引用的处理函数**全部存在**，无 `ImportError`/`AttributeError` 型空注册；**没有任何已注册路由指向 `not implemented` 桩**。
+**AST 级核对结果**：85 条注册引用的处理函数**全部存在**，无 `ImportError`/`AttributeError` 型空注册；**没有任何已注册路由指向 `not implemented` 桩**。
+（初版 83 条 → 本版 85 条：`/ugc/update_cluster_venv`、`/ugc/register_cluster_venv` 由 `9de1536` 新增。）
 
 ### 4.2 已完整实现（本仓真实逻辑）
 
@@ -228,20 +270,24 @@ xxx/
 | **workspace `/ugc/*` 9 条** | STS、同步状态、集群文件分页、双向同步、删除 —— 全部真实实现 | `api/resource/cloud_storage/default.py:40-182` → `cloud_storage/service/**`；DB 层 `server_model/user_impl/aio_user_db/default.py:34-119` |
 | workspace 任务侧 | `<provider>://<group>/<user>/workspaces/<name>` 解析、提交期存在性校验、pod 挂载项生成 | `server_model/task_impl/workspace_resolver.py`、`server_model/task_impl/runtime_mounts/default.py:20-55`、`api/operation/implement.py:245-249` |
 | 崩溃恢复 / 进程池回收 | 心跳 + `SET NX` 互斥 + startup/shutdown 钩子 | `cloud_storage/service/recovery.py`、`api/register/implement.py:86-87` |
-| env 运行时消费 | `HAIENV_PATH` 注入 + `source haienv <name> [-u owner]` | `server_model/task_impl/single_task_impl.py:60-61,150-158` |
+| env 运行时消费 | `HAIENV_PATH` 注入（与数据面同源，改走 `get_user_env_dir`）+ `source haienv <name> [-u owner]` | `server_model/task_impl/single_task_impl.py:60-62,162` |
+| env 路径单点与开关 | 5 个纯函数（`get_env_path/get_env_root/get_user_env_dir/get_env_registry_path/get_env_dir_name`）+ `env_push_enabled*` / `env_name_regex` | `conf/utils.py:411-479`、`cloud_storage/service/context.py:144-203`、`one/one_etc/core.toml:113-117` |
+| **env `/ugc/*` 2 条** | `POST /ugc/update_cluster_venv`（名称白名单 / 路径推导 / 写权限探测 / 返回 `cloud_path`+`haienv_version`）、`POST /ugc/register_cluster_venv`（`flock` + `REPLACE` 写 `venv.db` 的 `haienv` 表 + 回读校验 + 目录可见性轮询） | `api/resource/storage/default.py:52-138` → `cloud_storage/service/env_registry.py`（283 语句，行覆盖 93%） |
+| env 启动自检 | `env_registry_self_check()`：校验 `env_root` 与 `get_base_path(FileType.ENV)` 同源，并打印 `haienv_version`；失败只告警不阻断 | `cloud_storage/service/env_registry.py:500-536`、`api/register/implement.py:94` |
 
 ### 4.3 未实现 / 桩（按可达性分类）
 
-全仓 `default.py` 中返回 `'not implemented'` 的函数共 **33 个**，其中**仅 1 个**（`task_sys_log_api`）被 `implement.py` 同名覆盖。其余 **32 个**按可达性分为三类：
+全仓 `default.py` 中返回 `'not implemented'` 的函数共 **32 个**（初版 33 个：`update_cluster_venv` 的桩已随 env 实现移除），其中**仅 1 个**（`task_sys_log_api`）被 `implement.py` 同名覆盖。其余 **31 个**按可达性分为三类：
 
 | 类别 | 函数（所在文件） | 客户端是否调用 | 是否有路由 |
 | --- | --- | --- | --- |
-| **A. 客户端会调用但未注册**（→ 见 §5） | `swap_memory`(`api/task/swap/default.py:3`)、`update_cluster_venv`(`api/resource/storage/default.py:9`)、`haiprof_task`(`api/task/experiment/default.py:24`)、`validate_task`(`:10`)、`validate_nodes`(`:17`)、`task_container_log_api`(`:46`) —— 共 6 个 | ✅ | ❌ |
+| **A. 客户端会调用但未注册**（→ 见 §5） | `swap_memory`(`api/task/swap/default.py:3`)、`haiprof_task`(`api/task/experiment/default.py:24`)、`validate_task`(`:10`)、`validate_nodes`(`:17`)、`task_container_log_api`(`:46`) —— 共 5 个（**初版 6 个**：`update_cluster_venv` 已实现并注册，见 §4.2） | ✅ | ❌ |
 | **B. 无任何入口（死桩 / 私有扩展点）** | `create_task`(`api/task/experiment/default.py:3`，已被 `create_task_v2` 取代)、`create_task_base_queue`、`switch_schedule_zone`、`checkpoint_api`、`syslog_api`、`hfai_image_load/update_status/list/delete`(4)、`clone_dataset*`(3)、`get_user_monitor_info`、`get_user_weka_usage`、`get_external_user_storage_usage`、`handle_user_usage_exceed`、external-user API(6)、`get_user_community_info`、`get_task_distribute_api`、`set_external_user_cloud_storage_quota` —— 共 25 个 | ❌ | ❌ |
 | **C. 审计子系统** | `run_audit`(`cloud_storage/audit/default.py:10`) —— 共 1 个 | ❌ | ❌ |
 
 > 类别 B 的桩多数是**有意留出的私有覆盖接缝**（见 §2.3 含义 B），不应一律视为缺陷；但 `checkpoint_api`、`syslog_api`、`get_task_distribute_api` 等连前端入口都没有，属真正的死代码。
-> workspace 的 P1 需求（API-10 配额 / API-11 env 上传 / API-12 用量）对应函数分别落在 A、B 两类中。
+> **`api/resource/storage/default.py` 的 `update_cluster_venv` 桩已被真实实现取代**（该文件现在仍返回 `not implemented` 的只剩 `get_user_weka_usage`、`get_external_user_storage_usage`，属类别 B）。
+> workspace 的 P1 需求（API-10 配额 / **API-11 env 上传（已实现）** / API-12 用量）中，env 上传已闭环，配额与用量仍落在 A、B 两类。
 
 **完全无实现**（连桩都没有）：`/operating/rerun_task` —— 客户端 `client/api/experiment_api.py:87` 会调用，全仓无任何服务端代码。
 
@@ -273,11 +319,22 @@ xxx/
 | **S-10** | 低 | `api/app.py:51` 引用的 `api/openapi_specification/user_api.yaml` **在本仓不存在**（swagger 文档加载可能失败） | `api/app.py:46-58` |
 | **S-11** | 低 | 其余：`api/register/default.py:12` 直接 `os.environ['SERVER']`（未设置即 `KeyError`）；`post_process_cluster_df` 为恒等函数；`check_sidecar_get_err` 恒返回 `None`；`query/task/container_monitor_stats/list` 的 try-import 失败会 NameError；关机时进程池 `shutdown()` 无 `cancel_futures` 会阻塞 | `api/register/default.py:11-12`；`api/resource/cluster/default.py:2-3`；`api/operation/default.py:34-35`；`api/query/optimized/task/implement.py:18-21,361`；`cloud_storage/utils.py:88-94` |
 
+**两条与本次更新相关的补充（其余 S-x 沿用初版判定）**
+
+- **S-1（env 侧不命中裸 500，但全局兜底仍缺）**：两条新接口在 `except Exception` 分支把异常包成 `WorkspaceError`
+  返回带 `success` 的 JSON（`api/resource/storage/default.py:68-77,107-118`），因此 env 链路不会返回裸 500 文本；
+  **全局 `Exception` 处理器仍然缺失**，S-1 对其它路径继续成立。
+- **S-7（env 侧已双面覆盖，workspace 侧仍成立）**：env 开关 `check_env_push_enabled` 同时作用于控制面
+  （API-11/API-13）与**数据面**（`sync_to_cluster` 的 `file_type=env` 分支，`9f9e86b` 的 N4），并已用
+  `docs/haiplatform/scripts/env_rollback_drill.sh` 实测「关停 → 三条写入路径全部 `FEATURE_DISABLED`」；
+  初版指出的 workspace 侧 4 条接口（`get_sts_token`/`set_sync_status`/`get_sync_status`/`cluster_files/list`）
+  仍可绕过 `enabled/enabled_users/enabled_groups`。
+
 ---
 
 ## 5. 客户端调用 ↔ 服务端注册 缺口矩阵
 
-对客户端全部 `mars_url()/...` 调用点与 `api/register/implement.py` 注册表做程序化差集，**7 条客户端调用在本仓没有路由**（另有 `/monitor_v2/*` 2 条属独立监控服务，不在本仓）：
+对客户端全部 `mars_url()/...` 调用点与 `api/register/implement.py` 注册表做程序化差集，**6 条客户端调用在本仓没有路由**（`d372319` 重跑附录 C 命令 2：输出 8 条，其中 `/monitor_v2/*` 2 条属独立监控服务、不在本仓；初版 7 条中的 `/ugc/update_cluster_venv` 已闭环）：
 
 | # | 客户端调用点 | 服务端现状 | 用户可见后果 |
 | --- | --- | --- | --- |
@@ -287,11 +344,11 @@ xxx/
 | 4 | `POST /operating/task/haiprof`<br>`client/api/haiprof_api.py:7` | 桩 `api/task/experiment/default.py:24`，未注册 | 性能剖析提交失败 |
 | 5 | `POST /query/task/container_log`<br>`client/api/experiment_api.py:533` | 桩 `api/task/experiment/default.py:46`（返回空串），未注册 | `hfai logs -c` 404 |
 | 6 | `POST /ugc/swap_memory`<br>`client/api/swap_api.py:13` | 桩 `api/task/swap/default.py:3`，未注册 | 任务内 `set_swap_memory()` 失败 |
-| 7 | `POST /ugc/update_cluster_venv`<br>`client/api/venv_api.py:22` | 桩 `api/resource/storage/default.py:9`，未注册 | venv 上传链路断点 |
+| ~~7~~ | ~~`POST /ugc/update_cluster_venv`~~ | **已闭环（`9de1536`）**：真实实现 + 已注册 | venv 上传链路已可用（见 §7） |
 
-> **保留意见**：第 2–7 条**可能由生产环境的私有 `api/register/custom.py` 补注册**（本仓 `custom.py` 数量为 0，无法验证）。第 1 条 `rerun_task` 连桩都没有，私有实现也只能从零写。
+> **保留意见**：第 2–6 条**可能由生产环境的私有 `api/register/custom.py` 补注册**（本仓 `custom.py` 数量为 0，无法验证）。第 1 条 `rerun_task` 连桩都没有，私有实现也只能从零写。
 >
-> **反向观察**：注册表中另有 **41 条路由客户端从不调用**（如 `task/share`、`task/resume`、`task/fail`、`user/create`、`node/host_info/*`、`service_task/*`、`training_quota/list_all` 等），它们是**前端 Hub / 管理工具 / 私有代码**的接口——这属于正常分工，不是缺陷。（已确认这 41 条在 `client/**`、`plugins/**`、`base_model/**` 中均无调用点。）
+> **反向观察**：注册表中另有 **41 条路由客户端从不调用**（如 `task/share`、`task/resume`、`task/fail`、`user/create`、`node/host_info/*`、`service_task/*`、`training_quota/list_all` 等），它们是**前端 Hub / 管理工具 / 私有代码**的接口——这属于正常分工，不是缺陷。（`d372319` 重跑仍为 41 条——新增的 2 条 env 路由由客户端 `venv_api.py` 调用，不在其中。）
 
 ---
 
@@ -330,32 +387,48 @@ xxx/
 3. **STS 最小权限降级** —— `s3`/RustFS 无 STS 角色扮演，下发静态 AK/SK，SEC-02 的「最小权限前缀」未实现；
 4. **registry 推送无凭据** —— 部署走本机 import 到 containerd 的旁路；
 5. **宿主机上存在未收编的 rustfs 实例**（端口 9000，默认凭据）—— 与环境内 19000 端口的容器并存，建议尽快停用；
-6. **P1 未实现** —— FR-17/18/21、API-10/11/12；`cloud_storage_quota` 访问器未加，`sync_from_cluster` 用 100 GiB 兜底。
+6. **P1 未实现** —— FR-17/18/21、API-10/11/12；其中 **API-11（`/ugc/update_cluster_venv`，env 上传）已由 env 特性闭环**（见 §7），
+   配额（API-10）与用量（API-12）仍缺；`cloud_storage_quota` 访问器未加，`sync_from_cluster` 用 100 GiB 兜底。
 
 ---
 
 ## 7. `env`（haienv）特性端到端判定
 
-| # | 场景 | 客户端 | 服务端 | 判定 |
+**初版（`b866c10`）结论：整条跨端链路不可用。本版（`d372319`）：已实现并端到端实测。**
+
+| # | 场景 | 客户端 | 服务端 | 判定（d372319） |
 | --- | --- | --- | --- | --- |
 | S1 | 开发容器内 `haienv create` → 任务指定 `HF_ENV_NAME` | ✅ | ✅ | **可用**（env 直接建在共享盘） |
 | S2 | 代码内 `haienv.set_env()` | ✅ | — | **可用**（需 `HAIENV_PATH` 可达） |
 | S3 | `hfai env list`（本用户） | ✅ | — | **可用** |
-| S4 | `hfai env list -u <他人>` | ⚠️ | — | 仅共享盘可见时可用（无路径校验） |
-| S5 | 集群外建 env → 推到集群 | ❌ 无命令 + 枚举 bug | ❌ 端点未注册 | **不可用** |
-| S6 | 推送后任务 `source haienv <name>` | — | ❌ 无注册表写入 | **不可用** |
-| S7 | 推送 `extend=True` 的环境 | ❌ 客户端明确拒绝 | — | 设计上不支持 |
+| S4 | `hfai env list -u <他人>` | ⚠️ | — | 仅共享盘可见时可用；`-u` 已加 `..`/`/` 校验（修 E9/SEC-06），但 `list` 的 `show_all` 参数仍未使用 |
+| S5 | 集群外建 env → 推到集群 | ✅ `env push`（C-8 已闭环） | ✅ API-11（含 `cloud_path`、写权限探测、`haienv_version`） | **可用**（103 实测） |
+| S6 | 推送后任务 `source haienv <name>` | — | ✅ API-13 写 `venv.db` 的 `haienv` 表 + 回读校验 | **可用**（任务内 `source haienv` + 探针 `import` 通过） |
+| S7 | 推送 `extend=True` 的环境 | ✅ 客户端拒绝 | ✅ 服务端再拒一次 | 设计上不支持（两端一致） |
 
-**根因不止「缺端点」，还有路径约定不一致**：
+**路径约定已按 ADR-E1 对齐**（初版指出数据面与运行时相差一层 `{group}/shared`）：
 
-| 环节 | 路径 | 证据 |
+| 环节 | 现状 | 证据 |
 | --- | --- | --- |
-| 数据面（上传落盘） | `{env_path}/{group}/shared/hfai_envs/{user}/{name}`，`env_path=/hf_shared` | `cloud_storage/utils.py:469-474`；`one/one_etc/core.toml:113` |
-| 运行时（搜索根） | `dirname(HAIENV_PATH) = /hf_shared/hfai_envs`，再遍历其下**用户目录**找 `venv.db` | `server_model/task_impl/single_task_impl.py:61`；`plugins/haienv/haienv/haienv:45-90` |
+| 数据面（上传落盘，cluster 侧） | `env_root/{user}/{name}_{suffix}`，`env_root = {env_path}/hfai_envs` | `cloud_storage/utils.py:470-477`、`conf/utils.py:456-479` |
+| 运行时搜索根 | `HAIENV_PATH = {env_root}/{user}`（任务侧由 `get_user_env_dir` 注入，与数据面同源） | `server_model/task_impl/single_task_impl.py:60-62,162` |
+| 对象存储 key（cloud 侧） | 保持 `{group}/shared/hfai_envs/{user}/{dir}`（**CMP-05：存量对象无需迁移**） | `cloud_storage/service/env_registry.py:283-302` |
 
-两者相差一层 `{group}/shared`，因此**即使上传成功，`source haienv` 也发现不了该环境**。补齐需要三件事：客户端 `env push` 入口（含 `.value` 修复与可执行文件解析）、`env_root` 路径对齐、上传后写 `venv.db` 注册表（可复用镜像内 `haienv` 包的 `Haienv.insert`）。设计见 [env/env-server-design.md](env/env-server-design.md)，规模约 6.5 人日，不新增 Postgres 表。
+**103 实测证据**（详见 [env/env-server-test-report.md](env/env-server-test-report.md) §5/§9；一键脚本 [scripts/verify_env.sh](scripts/verify_env.sh)）：
 
----
+| 验证 | 结果 |
+| --- | --- |
+| L1 服务端单测 | 46 passed / 1 skipped（`env_registry.py` 行覆盖 93%） |
+| 客户端单测 | 39 passed（`env push` 12 + `create` 前置 27） |
+| L2 接口冒烟 | 20/20（正常/边界/幂等/越界/鉴权/注册表反序列化） |
+| N3 幂等自检 | 5/5（重试复用同一目录，不再产生 `_1`） |
+| 回滚演练 | 8/8（`DRILL_L2=1` 时 13/13）；关停 4–5s、恢复 5s，`venv.db` 无脏数据 |
+| L3 端到端 | 16/16：本地（集群外）→ 对象存储 → 集群落盘 + 注册 → 任务内 `source haienv` + 探针 `PROBE_OK` |
+| 回归 | `smoke_ugc` 8/8、`e2e_workspace` 19/19 |
+
+**env 侧仍未闭环（精简 M3 的剩余项，台账见 [env/env-server-test-report.md](env/env-server-test-report.md) §9.2 的 N1–N9）**：
+权限口径（N1：客户端把 env 目录 `chmod 777`，`venv.db` 在共享盘上同组可写）、注册表值反序列化安全（N2，与 N1 同源）、
+注册耗时指标桶粒度（N8）、灰度期「老客户端 + 新服务端」组合（N9）。正式发布镜像、三档灰度观察期与 POST/ACC 签署留给真上线。
 
 ## 8. 不完整清单（按优先级）
 
@@ -365,33 +438,38 @@ xxx/
 | **P0** | S-1 | 服务端 | 缺通用 `Exception` 处理器，异常返回裸 500 无 `success` | `api/app.py:211-256` | 破坏客户端全局契约 |
 | **P0** | S-2 | 服务端 | 崩溃恢复 5 项正确性问题 | `cloud_storage/service/recovery.py` 等 | 生产每次重启必踩 |
 | **P0** | §5#1 | 服务端 | `/operating/rerun_task` 完全无实现 | `client/api/experiment_api.py:87` | 重跑任务不可用 |
-| **P1** | C-1 / C-2 | 客户端 | `FileType` 枚举字符串化；env 分支恒不命中 | `conf/utils.py:22-34` 等 | 依赖服务端兼容层兜底 |
-| **P1** | §5#2-7 | 服务端 | 6 条客户端调用只有桩、未注册 | 见 §5 表 | 6 个功能 404（除非私有层补齐） |
-| **P1** | §7 | 双端 | env 上传链路整体缺失 + 路径约定不一致 | 见 §7 | 跨端 env 不可用 |
+| **P1** | C-1 | 客户端 | `FileType` 枚举字符串化**部分修复**：4 处 URL 已走 `enum_value()`，`workspace_util.py:189,249,285` 仍裸插值 | `conf/utils.py:22-34`、`workspace_util.py:121-126` | 依赖服务端兼容层兜底（**C-2 已闭环**，见 §3.4 状态） |
+| **P1** | §5#2-6 | 服务端 | 5 条客户端调用只有桩、未注册 | 见 §5 表 | 5 个功能 404（除非私有层补齐） |
+| ~~P1~~ | §7 | 双端 | ~~env 上传链路整体缺失 + 路径约定不一致~~ **已闭环（`9de1536` + `9f9e86b`）** | 见 §7 | 跨端 env 已可用；剩余 N1/N2/N8/N9 见下一行 |
+| **P1** | N1 / N2 | 服务端 + 客户端 | env 权限口径：客户端把用户 env 目录 `chmod 777`，`venv.db` 在共享盘上同组可写，而读取端会 `pickle.loads` | [env/env-server-test-report.md](env/env-server-test-report.md) §9.2 | 安全（内部环境暂以同组互信为前提，上生产前需裁决） |
+| **P2** | N8 / N9 | 服务端 + 客户端 | env 注册耗时用默认桶（P99 只能粗判）；灰度期「老客户端 + 新服务端」会静默写错对象 key（靠发布顺序控制） | 同上 §9.2 | 观测精度 / 发布顺序纪律 |
 | **P1** | S-4 | 服务端 | 挂载点安全校验为空实现 | `api/resource/storage/default.py:25-27` | 安全 |
 | **P1** | S-3 | 服务端 | 多处 SQL 字符串拼接 | 见 S-3 证据 | 安全 |
 | **P2** | S-6 | 服务端 | nodeport 接口要求 internal role 与 `/ugc` 语义冲突 | `api/task/port.py:12-16` | 外部用户必 401 |
 | **P2** | S-7 | 服务端 | 灰度开关覆盖不全（4 个接口可绕过） | 见 S-7 证据 | 灰度发布风险 |
 | **P2** | S-8 | 服务端 | 两套并行 workspace 实现语义漂移 | `cloud_storage/api.py` vs `service/` | 维护风险 |
 | **P2** | C-6 | 客户端 | `hfai python` 内部构建不自动 push workspace | `client/commands/hfai_python.py:171` | 使用体验 |
-| **P2** | C-7 / C-11 | 客户端 | `haienv create` 硬编码 + 包装脚本缺陷 | 见 C-7/C-11 | 新镜像不可用 |
+| **P2** | C-7 | 客户端 | `haienv create` CUDA 门禁**已改为告警式**（`HAIENV_CUDA_STRICT=1` 可恢复严格）；`__IS_HF_ENV__`/conda 前置仍待处理 | 见 C-7 状态 | 新镜像上可用性已改善 |
+| **P2** | C-11 | 客户端 | `haienv` 包装脚本：`[[ "$2" -ne "-u" ]]`、`cat <<EOF >> $prog` 追加而非截断 | `plugins/haienv/haienv/haienv:5,30` | `-u` 校验不可靠；`/tmp/haienv` 残留累积 |
 | **P3** | S-9 / S-10 / S-11 | 服务端 | 审计桩、swagger yaml 缺失、若干小逻辑问题 | 见 §4.5 | 次要 |
 | **P3** | C-4 / C-5 / C-9 / C-10 | 客户端 | 默认值冲突、Mock 静默兜底、插件非自包含、死代码 | 见 §3.4 | 次要 |
 | **P3** | —— | 文档 | `validate`/`monitor`/`prof`/`version` 四个命令文档有、代码无 | `docs/_sources/cli/cluster.rst.txt:4-20` | 文档与实现不一致 |
-| **P3** | S-* | 服务端 | workspace P1（API-10/11/12、配额、审计、用量） | `docs/.../workspace-server-task-list.md` §8.4 | 已知排期外 |
+| **P3** | S-* | 服务端 | workspace P1（API-10 配额 / API-12 用量、审计）——**env 的 API-11/13 已实现** | `docs/.../workspace-server-task-list.md` §8.4 | 已知排期外 |
 | **P3** | §4.4 | 服务端 | `localfs` provider 缺失 | `cloud_storage/service/context.py:168-170` | 测试/单机部署路径 |
 
 ---
 
 ## 9. 建议的收口顺序
 
-1. **修客户端硬 bug（成本最低）**：C-3（补 `async_load/async_delete` 或下线命令）、C-1（统一 `.value`，可给 `FileType` 加 `__str__ = str.__str__` 一次性解决）、C-2。
-2. **给 7 条缺失路由一个明确态度**：要么在开源层注册并实现（至少 `rerun_task`），要么在 `api/register/implement.py` 里显式声明「由私有 `custom.py` 提供」，避免使用者误以为功能存在。
+1. **修客户端硬 bug（成本最低）**：C-3（补 `async_load/async_delete` 或下线命令）、C-1 剩余 3 处裸插值（`workspace_util.py:189,249,285`，或给 `FileType` 加 `__str__ = str.__str__` 一次性解决）。~~C-2~~ 已闭环。
+2. **给 6 条缺失路由一个明确态度**（初版 7 条，`update_cluster_venv` 已闭环）：要么在开源层注册并实现（至少 `rerun_task`），要么在 `api/register/implement.py` 里显式声明「由私有 `custom.py` 提供」，避免使用者误以为功能存在。
 3. **加通用 `Exception` 处理器**（S-1），保证任何路径都返回带 `success` 的 JSON。
 4. **修崩溃恢复**（S-2 的 5 个子项）——这是生产重启后必然暴露的问题。
-5. **env 链路**：按 [env/env-server-design.md](env/env-server-design.md) 补 `env push` + `env_root` 路径对齐 + `venv.db` 注册。
+5. ~~**env 链路**：按设计补 `env push` + `env_root` 路径对齐 + `venv.db` 注册~~ —— **已完成**（`9de1536`，103 实测见 §7）；后续按 [env/env-server-test-report.md](env/env-server-test-report.md) §9.2 的 N1–N9 台账收口剩余项
+   （优先 N1/N2 权限裁决，其次 N8 指标桶粒度与 N9 灰度期版本纪律）。
 6. **安全收口**：SQL 参数化（S-3）、`security_check` 落地（S-4）、`s3` provider 的 STS/前缀策略（§6.3 #3）。
 7. **文档对齐**：删除或标注 `docs/_sources/cli/cluster.rst.txt` 中不存在的 4 个命令。
+8. **收口 env 的 Checklist**：[env/env-server-checklist.md](env/env-server-checklist.md) 目前 74/133 已勾，未勾项按各聚合项的「M3 核查」备注逐条补测即可（PERF/REL/POST/ACC 属真上线阶段）。
 
 ---
 
@@ -401,7 +479,7 @@ xxx/
 | --- | --- |
 | CLI 入口与命令注册 | `client/hfai_cli.py:52-66` |
 | 插件装配 | `client/commands/utils.py:29-39`、`client/hfai_cli.py:71-83` |
-| 服务端路由唯一注册点 | `api/register/implement.py:23,67,90,133` |
+| 服务端路由唯一注册点 | `api/register/implement.py:23,67,97,140`（事件钩子 `:91-94`） |
 | 三层文件约定 | `base_model/utils.py:33-61` |
 | 客户端 HTTP 契约 | `client/api/api_utils.py:48-60` |
 | 客户端兼容层（枚举/Content-Type/Body 外壳） | `cloud_storage/service/compat.py:25-127` |
@@ -410,23 +488,31 @@ xxx/
 | workspace DB 访问 | `server_model/user_impl/aio_user_db/default.py:34-119` |
 | workspace 任务侧解析/挂载 | `server_model/task_impl/workspace_resolver.py`、`server_model/task_impl/runtime_mounts/default.py:20-55` |
 | env 运行时消费 | `server_model/task_impl/single_task_impl.py:60-61,150-158` |
-| env 数据面路径 | `cloud_storage/utils.py:469-474`、`one/one_etc/core.toml:97-137` |
-| 客户端 venv 上传死代码 | `client/api/venv_api.py:10-46` |
+| env 数据面路径（ENV 分支，已对齐 `env_root`） | `cloud_storage/utils.py:470-477`、`conf/utils.py:411-479`、`one/one_etc/core.toml:113-117` |
+| 客户端 env push 实现（初版此处为「死代码」） | `client/api/venv_api.py:135-243`、`plugins/haienv/haienv/client/command.py:212-230`、`plugins/haienv/haienv/client/cli.py:3,23` |
+| env 服务端领域层 | `cloud_storage/service/env_registry.py`（名称校验/路径推导/写权限探测/注册+回读/读失败 fail-closed/目录可见性轮询/自检） |
+| env 服务端接入层 | `api/resource/storage/default.py:52-138`（API-11 / API-13 / `startup_env_check`） |
+| env 开关与指标 | `cloud_storage/service/context.py:144-203`、`cloud_storage/metrics.py:48-76` |
+| env 验证脚本 | `docs/haiplatform/scripts/{verify_env,smoke_env,e2e_env,env_rollback_drill,check_env_idempotent,env_metrics}.sh`、`env_alerts.yml` |
 | haienv 本地实现 | `plugins/haienv/haienv/client/{api,command,model,script,sqlite_dict}.py`、`plugins/haienv/haienv/haienv` |
 | workspace 客户端实现 | `plugins/haiworkspace/haiworkspace/client/{cli,command,workspace_api,workspace_util}.py` |
 | 服务端异常处理器 | `api/app.py:211-256` |
 | workspace 实测记录 | [workspace/workspace-server-task-list.md](workspace/workspace-server-task-list.md) §8 |
 | env 逆向分析 | [env/hai-cli-env-analysis.md](env/hai-cli-env-analysis.md) |
+| env 实现与实测记录 | [env/env-server-test-report.md](env/env-server-test-report.md)（§5 分层结果、§9 M3 收口与 N1–N9 台账） |
+| env Checklist 与证据位置 | [env/env-server-checklist.md](env/env-server-checklist.md)（74/133 已勾，每项标注证据） |
 
 ## 附录 B · 无法确认项
 
 | # | 项 | 说明 |
 | --- | --- | --- |
-| B1 | 私有 `api/register/custom.py` 是否实际注册了 §5 的 6 条路由 | 本仓 0 个 `custom.py`，无法验证；判定为「本仓缺失」而非「生产缺失」 |
+| B1 | 私有 `api/register/custom.py` 是否实际注册了 §5 的 5 条路由（第 2–6 条） | 本仓 0 个 `custom.py`，无法验证；判定为「本仓缺失」而非「生产缺失」 |
 | B2 | `api/app.py:51` 的 swagger yaml 缺失是否导致启动失败 | 取决于 `swagger-ui-py` 的行为，本机未安装该依赖 |
 | B3 | nodeport 接口要求 internal role 是否有意为之 | `api/task/port.py:12` 留有待确认 TODO |
 | B4 | `from .custom import *` 在非标准目录下是否真的阻断启动 | 取决于部署时 `SERVER_CODE_DIR` 的取值（标准部署目录 `/high-flyer/code/multi_gpu_runner_server` 命中，不阻断） |
-| B5 | 任务 pod 内 workspace 实际运行 | 仓库记录为「未验证」（§6.3 #1） |
+| B5 | 任务 pod 内 workspace 实际运行 | 仓库记录为「未验证」（§6.3 #1）；**env 侧的任务内 `source haienv` 已实测通过（§7）** |
+| B6 | 私有 `api/resource/storage/custom.py` 是否覆盖新的 API-11/API-13 | ADR-E7 有意保留该接缝（实现放 `default.py`），本仓 0 个 `custom.py`，无法验证 |
+| B7 | 生产集群的 `env_push_enabled` 默认值是否按 REL-01 保持 `false` | 103 上为 `true`（内部测试环境）；生产发布顺序未验证 |
 
 ## 附录 C · 复现命令
 
@@ -438,6 +524,7 @@ from collections import Counter
 s = open('api/register/implement.py').read()
 r = re.findall(r"app\.(post|get)\('([^']+)'\)", s)
 print('routes:', len(r), Counter(p.split('/')[1] for m, p in r))
+# d372319 实测：routes: 85 Counter({'operating': 35, 'query': 33, 'ugc': 15, 'monitor': 2})
 PY
 
 # 2) 客户端调用 vs 服务端注册 差集
@@ -450,6 +537,7 @@ for p in glob.glob('client/**/*.py', recursive=True) + glob.glob('plugins/**/*.p
         called.add(m.group(1).rstrip('?'))
 norm = lambda p: re.sub(r'\{[^}]*\}', '{}', p)
 print(sorted(p for p in called if norm(p) not in {norm(x) for x in reg}))
+# d372319 实测：8 条，其中 /monitor_v2/* 2 条属独立监控服务 → 本仓缺口 = 6 条
 PY
 
 # 3) 找出所有 not implemented 桩
@@ -460,8 +548,17 @@ python3 -c "
 from enum import Enum
 class FileType(str, Enum): ENV='env'
 print(f'{FileType.ENV}', 'FileType.ENV' == FileType.ENV)"
+# d372319 实测：FileType.ENV False   → 类级隐患仍在（见 §3.4 C-1）
+
+# 5) env 链路一键验证（在 host 103 上执行，需已部署含 env 实现的镜像/服务端）
+bash docs/haiplatform/scripts/verify_env.sh      # 期望 PASS=8 FAIL=0
 ```
+
+> 命令 1/2/4 的输出在本版（`d372319`）已重跑核对；命令 3 的桩数量为 32（初版 33）。
 
 ---
 
 *本文档由代码审计生成，审计过程未修改任何源文件；引用仓库内既有实测结论处已标注出处。*
+
+*更新记录：初版基线 `b866c10`（2026-10-02）；本版基线 `d372319`（2026-10-02），重跑了附录 C 的
+路由/差集/桩统计并同步了 env 特性的实现与实测结论（§3.3/§3.4/§4.1~§4.3/§4.5/§5/§7/§8/§9/附录）。*

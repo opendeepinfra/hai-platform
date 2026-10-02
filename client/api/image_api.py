@@ -1,4 +1,5 @@
 
+import asyncio
 import os
 import shlex
 import shutil
@@ -199,6 +200,8 @@ async def push_image_tar(local_tar, image=None, force=False, no_load=False, no_c
         msg = pre.get('msg') if isinstance(pre, dict) else pre
         return {'success': 0, 'msg': f'预检失败：{msg}'}
 
+    # provider 以服务端返回的为准（服务端才是权威：103 上是 s3/rustfs，客户端默认 oss 会失败）
+    upload_provider = str(pre.get('provider') or provider or 'oss')
     proc_name = pre.get('name')
     image_name = pre.get('image') or image or filename
     cloud_path = pre.get('cloud_path') or ''
@@ -226,7 +229,7 @@ async def push_image_tar(local_tar, image=None, force=False, no_load=False, no_c
     else:
         stage_dir = _stage_image_tar(local_tar, filename)
         try:
-            cmd = _build_image_push_cmd(stage_dir, cloud_path, provider, force, no_checksum, no_diff,
+            cmd = _build_image_push_cmd(stage_dir, cloud_path, upload_provider, force, no_checksum, no_diff,
                                         list_timeout, sync_timeout, cloud_connect_timeout,
                                         token_expires, part_mb_size, proxy)
             print(f'开始上传：{filename}（{file_size} 字节）→ {cloud_path}/{filename}')
@@ -242,6 +245,26 @@ async def push_image_tar(local_tar, image=None, force=False, no_load=False, no_c
         return {'success': 1,
                 'msg': f'已上传到集群共享盘（{image_tar}），按要求跳过登记（--no-load）；'
                        f'之后可执行 `hai-cli images load {image_tar}` 完成登记'}
+
+    # stage2 的「进度到 100%」与「文件真的落在共享盘上」之间有窗口期（服务端进度是下载字节数，
+    # 之后才做落盘与状态收尾）。实测踩过：立刻 load 会得到「共享盘上不存在镜像包」（D13）。
+    # 因此登记前必须**用 API-19 复查 exists**，最多等 60s；仍不存在则按「已上传未登记」报错。
+    ready = bool(pre.get('exists'))
+    if not ready:
+        for _ in range(30):
+            await asyncio.sleep(2)
+            try:
+                chk = await user.image.async_push_precheck(file=filename, image=image_name,
+                                                          file_size=file_size)
+            except Exception:
+                chk = None
+            if isinstance(chk, dict) and chk.get('success') == 1 and chk.get('exists'):
+                ready = True
+                break
+    if not ready:
+        return {'success': 0,
+                'msg': f'上传已受理，但共享盘上尚未出现该 tar（{image_tar}）；'
+                       f'请稍后重试 `hai-cli images load {image_tar} --image {image_name}`'}
 
     try:
         result = await user.image.async_load(image_tar=image_tar, image=image_name, force=force)

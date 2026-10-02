@@ -93,7 +93,9 @@ def test_u01_image_root_single_point(monkeypatch, tmp_path):
     from cloud_storage.utils import get_base_path
     cluster_path, cloud_path = get_base_path('U-A', 'hfai', 'demo:v1', FileType.IMAGE)
     assert cluster_path == os.path.join(str(root), 'demo:v1')
-    assert cloud_path == ''
+    # S8-1（Q-10）：IMAGE 的 cloud_base_path 不再是空串 —— 上传通道用它作为对象存储 key 前缀，
+    # 同时也是 API-01 的 STS 授权前缀（SEC-08）。手工放盘路径不使用它，语义不变。
+    assert cloud_path == 'hfai/shared/images/U-A/demo:v1'
 
     assert normalize_image_path('/a/b/') == '/a/b'
     assert normalize_image_path(None) == '/nfs_shared/image'

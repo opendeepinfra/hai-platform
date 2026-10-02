@@ -71,7 +71,7 @@ docs/haiplatform/
 >
 > **来源与状态**：控制面（API-15~API-18）与运行面的设计**沿用旧分支** `feature/hai-cli-images-server-design`
 > 上已实现并在 103 实测通过的结论（被测 tag `f2cb559`）；本分支基线 `33a5b26` 上 images 的**代码/迁移/脚本/测试都不存在**，
-> 需先并入（任务列表 §3.10 S9），再实现上传通道（§3.9 S8）。**上传通道尚未实现、尚未验证。**
+> **S9（并入 P0 资产）与 S8（上传通道）均已完成**，并在 103 上验证通过（`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`：上传闭环 + md5 一致 + 幂等 + 开关一致性 + 负例，见 [images-server-test-report.md](images/images-server-test-report.md) §9.1/§9.2）。
 > 文中 `P0` / `P1` 只标注来源与阶段（P0 = 控制面 + 运行面，P1 = 上传通道），**不代表可选项**。
 
 | 文档 | 内容 | 关键章节 |
@@ -89,7 +89,7 @@ docs/haiplatform/
 > 只加 `file_type=image` 分支 + 强制 `no_zip=true` + 落点必须在 `image_path` 之下；服务端四处改动
 > （`get_base_path` IMAGE 分支、`sync_to_cluster` 白名单与 `check_image_enabled`、迁移 `036`、可选 API-19），
 > 客户端一条命令，节点侧一行不改（HC-14）。需求 FR-16~FR-20 · 设计 §3.5/§4.6/§5.6/§6.4/§7.5/§9.5 · ADR-I11~I14 ·
-> 用例 §4.11 + E2E-09/10 + FI-09~12 · Checklist 阶段 17（14 项，全部 ☐）。
+> 用例 §4.11 + E2E-09/10 + FI-09~12 · Checklist 阶段 17（14 项已勾选，103 实测 `PASS=33 WARN=1 FAIL=0`）。
 
 > **与 [hai-cli-client-server-audit.md](hai-cli-client-server-audit.md) 的关系**：审计记录了客户端侧 **C-3**
 > （`images load/delete` 抛 `AttributeError`），但**全文没有出现 `user_images`**、**没有任何 images 的 `S-x`**、
@@ -107,7 +107,7 @@ docs/haiplatform/
 
 | 位置 | 内容 |
 | --- | --- |
-| [scripts/](scripts/) | 部署与验证脚本：镜像离线构建（`build_hai.sh` + `patch_dockerfile.py`）、无 registry 凭据时的部署旁路（`redeploy_local.sh`）、RustFS 部署（`deploy_rustfs.sh`）、`[cloud.storage]` 配置生成（`config_cloud_storage.sh`）、接口冒烟（`smoke_ugc.sh`）、7 子命令 E2E（`e2e_workspace.sh`）、S3 语义验证（`rustfs_check.py`）；含用法与排障速查。**images 相关脚本**（`probe_images.sh`、`image_fixture.sh`、`patch_image_override.py`、`check_images_preflight.sh`、`smoke_images.sh`、`e2e_images.sh`、`e2e_images_push.sh`）**尚未并入本分支**，随 S9-1/S8-6 一同落地 |
+| [scripts/](scripts/) | 部署与验证脚本：镜像离线构建（`build_hai.sh` + `patch_dockerfile.py`）、无 registry 凭据时的部署旁路（`redeploy_local.sh`）、RustFS 部署（`deploy_rustfs.sh`）、`[cloud.storage]` 配置生成（`config_cloud_storage.sh`）、接口冒烟（`smoke_ugc.sh`）、7 子命令 E2E（`e2e_workspace.sh`）、S3 语义验证（`rustfs_check.py`）；含用法与排障速查。**images 相关脚本**（`probe_images.sh`、`image_fixture.sh`、`patch_image_override.py`、`check_images_preflight.sh`、`smoke_images.sh`、`e2e_images.sh`、`e2e_images_push.sh`）已随 S9-1/S8 落地（上传通道脚本实测 `PASS=33 WARN=1 FAIL=0`） |
 | [../../deploy/terraform/](../../deploy/terraform/) | 测试环境编排快照（Multipass VM → MicroK8s → Hai Platform 三层），从 `hai-install` 复制、剔除本地 state 与凭据 |
 
 ## 4. 一页速览（结论）

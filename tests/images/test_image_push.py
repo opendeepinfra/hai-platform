@@ -26,12 +26,6 @@ from cloud_storage.service.errors import ErrorCode, WorkspaceError
 from cloud_storage.service import sync_to_cluster as stc
 from cloud_storage.utils import check_is_subpath, get_base_path, get_bucket_name
 
-try:  # 客户端命令组装（host 上跑才有）
-    from hfai.client.api.image_api import _build_image_push_cmd, push_image_tar
-except Exception:  # pragma: no cover - 镜像内通常没有 hfai
-    _build_image_push_cmd = None
-    push_image_tar = None
-
 
 def run(coro):
     ''' 不依赖 pytest-asyncio 版本：直接跑协程（与 tests/images 其它文件同一写法）。 '''
@@ -173,9 +167,12 @@ def test_up03_image_passes_whitelist(_stc_guards, monkeypatch):
         raise RuntimeError('BASE_PATH_REACHED')     # 走到这里说明已通过白名单与 no_zip 闸门
 
     monkeypatch.setattr(stc, 'get_base_path', sentinel_base_path)
-    with pytest.raises(RuntimeError) as ei:
+    # submit_to_cluster 会把 get_base_path 的任何异常包成 INVALID_PARAM：用 sentinel 文案区分
+    # 「已通过白名单后走到路径派生」与「被白名单挡下」两种结果
+    with pytest.raises(WorkspaceError) as ei:
         run(stc.submit_to_cluster(FakeUser(), 'demo', FileType.IMAGE, ['demo.tar'], no_zip=True))
-    assert 'BASE_PATH_REACHED' in str(ei.value)
+    assert 'BASE_PATH_REACHED' in ei.value.msg
+    assert '不支持同步' not in ei.value.msg
 
 
 def test_up05_image_name_must_not_contain_slash(_stc_guards):
@@ -186,24 +183,5 @@ def test_up05_image_name_must_not_contain_slash(_stc_guards):
     assert '镜像条目名' in ei.value.msg
 
 
-# --------------------------------------------------------------------------- TC-UP-11（客户端）
-
-@pytest.mark.skipif(_build_image_push_cmd is None, reason='客户端 hfai 包未安装（host 专用）')
-def test_up11_build_push_cmd_contract():
-    ''' FR-16：子进程命令必须是字面量 `--file_type image`、恒带 `--no_zip`、且不含枚举串。 '''
-    cmd = _build_image_push_cmd('/tmp/stage', 'hfai/shared/images/U-A/demo', 'rustfs', False,
-                                False, False, 300, 1800, 120, 1800, 100, '')
-    assert '--file_type image' in cmd
-    assert 'FileType.IMAGE' not in cmd
-    assert '--no_zip' in cmd
-    assert '--image_remote_path hfai/shared/images/U-A/demo' in cmd
-    assert '--image_local_path /tmp/stage' in cmd
-    assert '--image_provider rustfs' in cmd
-
-
-@pytest.mark.skipif(push_image_tar is None, reason='客户端 hfai 包未安装（host 专用）')
-def test_up11_local_missing_file_makes_no_request():
-    ''' TC-UP-11③：本地文件不存在时不发起任何请求，直接给出可读提示。 '''
-    result = run(push_image_tar('/nonexistent/hai-image-demo.tar'))
-    assert result['success'] == 0
-    assert '不存在这个镜像包' in result['msg']
+# 客户端侧用例（命令组装 / 本地缺文件不发请求）在 tests/images/test_image_push_client.py：
+# 那份文件只依赖已安装的 `hfai`，可在 host 上直接跑（本文件需要服务端依赖，只在镜像内跑）。

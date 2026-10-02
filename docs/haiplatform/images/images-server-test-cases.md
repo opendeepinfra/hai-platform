@@ -8,13 +8,17 @@
 > - **来源**：控制面（API-15~API-18）与运行面（`marsv2/scripts/link_hfai_image.sh`、`init_manager.py` 注入、`storage` 挂载种子）
 >   的设计沿用分支 `feature/hai-cli-images-server-design` 上**已实现并在 103 实测通过**的结论，证据见
 >   [images-server-test-report.md](images-server-test-report.md)（被测 tag `f2cb559`）。
-> - **状态**：上传通道（FR-16~FR-20 / 设计 §3.5·§4.6·§5.6·§6.4·§7.5·§9.5 / 用例 §4.11 UP 组 + E2E-09/10 /
->   Checklist 阶段 17）在本文档集中是**本次必须交付的主入口**（不再是「P1 可选、未开工」），**尚未实现、尚未验证**。
+> - **状态（2026-10-02 更新）**：**S9（P0 资产并入与入口切换）已完成**，并在 103 上重跑通过
+>   （preflight `PASS=30 FAIL=0`、L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 `PASS=26 FAIL=0`、workspace/env 回归全绿 —— 见
+>   [images-server-test-report.md](images-server-test-report.md) §9.1）；**S8（上传通道）已实现并端到端验证通过**
+>   （`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`：push → 共享盘 md5 一致 → `user_sync_status=finished` →
+>   `train_image=loaded` → 任务产出镜像内探针 → 幂等 → 开关一致性/一级回滚可逆 —— 见 §9.2、E2E-09/E2E-10）。
 > - **标签约定**：文中 `P0` / `P1` 只用于标注**来源与阶段**（P0 = 控制面 + 运行面，P1 = 上传通道），**不代表可选项**。
-> - **资产状态**：`docs/haiplatform/scripts/` 的 images 相关脚本与 `tests/images/` **尚未并入本分支**，
->   并入计划见 [images-server-task-list.md](images-server-task-list.md) §3.10；文中引用它们是**目标交付物**而非现有文件。
+> - **资产状态**：P0 资产（控制面/运行面代码、迁移 `035`、`tests/images/test_image_domain.py`、`docs/haiplatform/scripts/`
+>   下的 images 脚本）已并入本分支（S9-1）；上传通道新增 `db_schemas/036.file_type_enum_add_image.sql`、
+>   `tests/images/test_image_push*.py`、`docs/haiplatform/scripts/e2e_images_push.sh`（S8），**全部已落地**。
 
-> **本分支文档集状态**：本文件是同批交付物之一；同目录下已有 [hai-cli-images-analysis.md](hai-cli-images-analysis.md)、[images-server-requirements.md](images-server-requirements.md)、[images-server-design.md](images-server-design.md)、[images-server-test-report.md](images-server-test-report.md)、[images-server-task-list.md](images-server-task-list.md)、[images-server-decisions.md](images-server-decisions.md)、[images-server-checklist.md](images-server-checklist.md)，正文中对它们的引用均为**相对链接**（与它们对本文的引用互指）。例外：`docs/haiplatform/scripts/` 的 images 脚本与 `tests/images/` **尚未并入本分支**（目标交付物），正文中以行内 `code` 标注并注明。
+> **本分支文档集状态**：本文件是同批交付物之一；同目录下已有 [hai-cli-images-analysis.md](hai-cli-images-analysis.md)、[images-server-requirements.md](images-server-requirements.md)、[images-server-design.md](images-server-design.md)、[images-server-test-report.md](images-server-test-report.md)、[images-server-task-list.md](images-server-task-list.md)、[images-server-decisions.md](images-server-decisions.md)、[images-server-checklist.md](images-server-checklist.md)，正文中对它们的引用均为**相对链接**（与它们对本文的引用互指）。`docs/haiplatform/scripts/` 的 images 脚本与 `tests/images/` **已并入本分支**（S9-1 并入 P0 资产 + S8 新增上传通道资产），正文中的行内 `code` 即指这些已落地文件。
 
 > **文档定位**:`docs/haiplatform/images/` 四件套之三([分析](hai-cli-images-analysis.md) → 《[需求](images-server-requirements.md)》→《[设计](images-server-design.md)》→ **用例**)。
 > **被测对象**:`API-15 /ugc/user/train_image/load`、`API-16 /ugc/user/train_image/update_status`、`API-17 /ugc/user/train_image/list`(修订版)、`API-18 /ugc/user/train_image/delete`;领域层 `server_model/user_impl/user_image/`、`server_model/selector/train_image_selector.py`、`conf/utils.py:get_image_root`、`cloud_storage/utils.py:get_base_path` 的 IMAGE 分支;客户端 `hai-cli images`(4 子命令 + `client/api/image_api.py`,其中 **`images push` 为本分支上传主入口**);**上传链路复用的 `API-01 /ugc/get_sts_token`、`API-05 /ugc/sync_to_cluster`、`API-06 /ugc/sync_to_cluster/status`(`file_type=image`)**;**运行期 `marsv2/scripts/link_hfai_image.sh` 与计算 pod 的 `load-image` initContainer**。
@@ -32,7 +36,7 @@
 | **L1** | 单元测试 | `conf/utils.py` 的 `get_image_root()` / `FileType.IMAGE` / `IMAGE_NAME_RE`、`get_base_path` 的 IMAGE 分支、领域层纯逻辑(命名派生 / 路径校验 / 状态机 / 组校验 / 归一化)、`TrainImageSelector` 的排序与出口类型 | pytest + `pytest-asyncio`;**不启动 FastAPI、不连 PostgreSQL、不起 k8s**(NFR-04);DB 访问以 fake 替身注入;共享根用 `tmp_path` 充当 | 领域层行覆盖率 ≥ 85%;`check_is_subpath` 组合与状态机迁移矩阵 **100% 分支覆盖**;U 组 12 例可在**无 registry、无 k8s**机器上 5 分钟内跑完 |
 | **L2** | 接口契约测试 | `api/resource/image/default.py` 的 4 个接口、`api/register/implement.py` 的 3 条新路由、`user_images` 修订后的响应体;**上传通道的接口面**:`file_type=image` 的 `API-01 /ugc/get_sts_token`(**STS 作用域前缀 = `cloud_base_path`**)、`API-05 /ugc/sync_to_cluster`(**stage2 落点**,`no_zip=true`)、`API-06` 轮询,以及 `images push` 落盘后触发的自动登记(API-15) | `ugc-server`(`ONE_SERVER=ugc`,`uvicorn_server.py :8083`);真实 PostgreSQL `mars_db` 的 `public.train_image`;共享盘 `image_path` 可读写;**RustFS/S3 可达(上传链路)**;HTTP 客户端须能伪造 query / `text/plain` JSON / `application/json` 三种入参承载 | 全部响应体含 `success`(§4.5 约定);错误码与设计 §4.5 表**逐项一致**;**只看 200 不算通过**:`psql` 侧副作用(行数 / 状态 / `path` / `updated_at`)必须与响应一致;**上传链路同样「只看 200 不算通过」**——必须核对**共享盘上真的有 md5 一致的文件**、且 `user_sync_status`(stage1/stage2 落点与终态)与 `train_image`(自动登记出的 `loaded` 行)**两套状态各就各位** |
 | **L3** | 端到端测试 | **上传主入口** `hai-cli images push <本地 tar>`(本机 tar →(STS 直传)RustFS/S3 →(stage2)`image_path` → 自动登记)+ 真实 `hai-cli images list/load/delete` + 自定义镜像 tar + `ugc-server` + `launcher` + 计算 pod initContainer(`link_hfai_image.sh`)+ 主容器跑探针 | **103 真实环境**(MicroK8s v1.21.13 / containerd 1.4.13 / 4 个 Multipass 节点)+ 共享盘 + **RustFS/S3**;**无内网 registry**(I11) | 一条自定义镜像任务 `succeeded` 且输出**由镜像内容决定**(探针包 / 标记文件,AC-01);initContainer 无 `not found`、exit 0;`/data_local` 前置与 busybox 引用满足(AC-08/AC-09);**上传链路**另需:共享盘落点与本地 tar **md5 一致**、stage1/stage2 终态 `FINISHED`(AC-15) |
-| **L4** | 兼容与灰度测试 | 旧客户端 wheel、两种 body 形态、三级灰度开关、私有 `custom.py` 覆盖、`image_path` 覆盖、一级回滚;**上传通道开关**(`[image].upload_enabled` / `max_tar_bytes` / `upload_require_precheck`,尚未实现)与上传通道的一级回滚 | 两套客户端二进制 + 两组服务端配置 + 一组「私有层已实现同名函数」的模拟部署 | 兼容矩阵(设计 §8)逐行成立;灰度外用户得到 `success=0 + FEATURE_DISABLED`;一级回滚后 `list` 与**已 `loaded` 行上的线上任务不被打断**(OPS-02);上传通道关闭后 `load`(兼容旁路)与**已 `loaded` 行上的任务仍可用**,且共享盘 / 对象存储**零新增写入**(AC-16/AC-18) |
+| **L4** | 兼容与灰度测试 | 旧客户端 wheel、两种 body 形态、三级灰度开关、私有 `custom.py` 覆盖、`image_path` 覆盖、一级回滚;**上传通道开关**(`[image].upload_enabled` / `max_tar_bytes` / `upload_require_precheck`,S8 已实现)与上传通道的一级回滚 | 两套客户端二进制 + 两组服务端配置 + 一组「私有层已实现同名函数」的模拟部署 | 兼容矩阵(设计 §8)逐行成立;灰度外用户得到 `success=0 + FEATURE_DISABLED`;一级回滚后 `list` 与**已 `loaded` 行上的线上任务不被打断**(OPS-02);上传通道关闭后 `load`(兼容旁路)与**已 `loaded` 行上的任务仍可用**,且共享盘 / 对象存储**零新增写入**(AC-16/AC-18) |
 >
 > **上传通道（本分支主入口）**：`file_type=image` 的上传用例见 **§4.11 UP 组（TC-UP-01~TC-UP-12）**，
 > 端到端见 **E2E-09（上传闭环）/ E2E-10（开关一致性）**，故障注入见 **FI-09~FI-12**。
@@ -95,7 +99,7 @@ loader_backend = 'register'              # 不需要 registry 的后端(ADR-I2 /
 name_regex = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(:[A-Za-z0-9._-]{0,127})?$'
 load_helper_image = 'docker.io/library/busybox:latest'   # Q-6:103 节点已有
 data_local_path = '/data_local'
-# —— 上传通道开关（**本分支主入口**，目标配置项，尚未实现）
+# —— 上传通道开关（**本分支主入口**，S8 已实现并在 103 实测）
 upload_enabled = true                    # 上传通道总开关；与 enabled 同时生效才允许上传（HC-12）
 max_tar_bytes = 0                        # 单 tar 上限（字节）；0 = 不限制，超限快速失败 IMAGE_TAR_TOO_LARGE（OPS-07）
 upload_require_precheck = false          # 是否强制客户端先走 API-19 预检（灰度期收紧入口）
@@ -104,9 +108,9 @@ upload_require_precheck = false          # 是否强制客户端先走 API-19 �
 image_path = '/nfs-shared/hai-platform/image'            # 103 覆盖值(设计 §3.3)
 ```
 
-> **上传开关尚未实现**：上表 `[image].upload_enabled` / `[image].max_tar_bytes` / `[image].upload_require_precheck`
-> 三项**推荐默认值为 `true` / `0` / `false`**，但均为本分支上传通道的**目标配置项**——当前分支代码尚未读取它们，
-> TC-UP-08（上传开关独立可关）/ TC-UP-10（上限快速失败）须待 S8/S9 并入后方可执行。
+> **上传开关已实现并实测**：上表 `[image].upload_enabled` / `[image].max_tar_bytes` / `[image].upload_require_precheck`
+> 默认值 `true` / `0` / `false` 均已落地（`cloud_storage/service/context.py`）；TC-UP-08（上传开关独立可关）
+> 与 TC-UP-10（上限快速失败）已在 103 执行通过（见 [images-server-test-report.md](images-server-test-report.md) §9.2）。
 
 > **基线自检(跑任何用例前)**:
 > `sudo kubectl -n hai-platform exec hai-platform-0 -- psql -U root -d mars_db -c "\d train_image"` 应含新增列 `message`(迁移 `035` 已生效);
@@ -438,6 +442,18 @@ Exception: 请求失败: [exception: ...]         # client/api/api_utils.py:75,�
 | **REG(回归)** | SMOKE + U 组全部 + A 组全部 + P 组全部 + C 组全部 + DB 组全部 + S 组全部 | 每个 PR |
 | **RELEASE** | REG + F 组 + O 组 + T 组 + L 组 + 全部 E2E + FI 矩阵 + **UP 组全部 + E2E-09/E2E-10 + FI-09~FI-12** + §7.2 的 workspace/env 回归 | 发布前 |
 
+### 7.1.1 执行结果（2026-10-02）
+
+| 集合 | 结果 |
+| --- | --- |
+| L1（镜像内） | `43 passed, 2 skipped`（新增 `test_image_push.py`；skipped = 客户端两条，需 host 上跑） |
+| L1（host 客户端） | `tests/images/test_image_push_client.py` → `2 passed` |
+| L2（控制面契约） | `smoke_images.sh` → `PASS=44 FAIL=0` |
+| L3（E2E） | `e2e_images.sh`（`E2E_PURGE_IMAGE=1`）→ `PASS=26 FAIL=0`；**`e2e_images_push.sh` → PASS=33 WARN=1 FAIL=0** |
+| 回归 | `smoke_ugc 8/8`、`e2e_workspace 19/19`、`smoke_env 20/20`、`e2e_env 16/16` |
+
+> 完整命令、原始输出与缺陷记录见 [images-server-test-report.md](images-server-test-report.md) §6/§9。
+
 ### 7.2 workspace 与 env 回归(不可省)
 
 本次改动**同时**落在三处跨特性共用代码与一处跨特性共用部署面:
@@ -459,9 +475,9 @@ bash docs/haiplatform/scripts/e2e_images.sh                         # 本特性�
 bash docs/haiplatform/scripts/e2e_images_push.sh                    # 本分支上传主入口新增,期望 PASS≥10 FAIL=0（含开关一致性与 md5 对比）
 ```
 
-> **并入状态**：本分支**尚未并入任何 images 脚本与 `tests/images/`**（`docs/haiplatform/scripts/smoke_images.sh` /
-> `e2e_images.sh` / `e2e_images_push.sh` 与 §4.11 的 UP 组用例同属**目标交付物**）；上述 images 脚本在
-> **S9（P0 资产并入与入口切换，1.0 人日）** 并入后方可执行。§7.2 既有回归脚本的期望值不变：
+> **并入状态**：本分支**已并入全部 images 脚本与 `tests/images/`**（`docs/haiplatform/scripts/smoke_images.sh` /
+> `e2e_images.sh` / `e2e_images_push.sh` 与 §4.11 的 UP 组用例均已落地，其中上传通道脚本 2026-10-02 实测 `PASS=33 WARN=1 FAIL=0`）。
+> §7.2 既有回归脚本的期望值不变：
 > `smoke_ugc` **8/8**、`e2e_workspace` **19/19**、`smoke_env` **20/20**、`e2e_env` **16/16**。
 >
 > **口径**：本分支交付 = **S9（P0 资产并入与入口切换，1.0 人日）+ S8（上传通道，2.0 人日）**，

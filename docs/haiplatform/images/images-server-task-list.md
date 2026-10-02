@@ -8,11 +8,15 @@
 > - **来源**：控制面（API-15~API-18）与运行面（`marsv2/scripts/link_hfai_image.sh`、`init_manager.py` 注入、`storage` 挂载种子）
 >   的设计沿用分支 `feature/hai-cli-images-server-design` 上**已实现并在 103 实测通过**的结论，证据见
 >   [images-server-test-report.md](images-server-test-report.md)（被测 tag `f2cb559`）。
-> - **状态**：上传通道（FR-16~FR-20 / 设计 §3.5·§4.6·§5.6·§6.4·§7.5·§9.5 / 用例 §4.11 UP 组 + E2E-09/10 /
->   Checklist 阶段 17）在本文档集中是**本次必须交付的主入口**（不再是「P1 可选、未开工」），**尚未实现、尚未验证**。
+> - **状态（2026-10-02 更新）**：**S9（P0 资产并入与入口切换）已完成**，并在 103 上重跑通过
+>   （preflight `PASS=30 FAIL=0`、L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 `PASS=26 FAIL=0`、workspace/env 回归全绿 —— 见
+>   [images-server-test-report.md](images-server-test-report.md) §9.1）；**S8（上传通道）已实现并端到端验证通过**
+>   （`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`：push → 共享盘 md5 一致 → `user_sync_status=finished` →
+>   `train_image=loaded` → 任务产出镜像内探针 → 幂等 → 开关一致性/一级回滚可逆 —— 见 §9.2、E2E-09/E2E-10）。
 > - **标签约定**：文中 `P0` / `P1` 只用于标注**来源与阶段**（P0 = 控制面 + 运行面，P1 = 上传通道），**不代表可选项**。
-> - **资产状态**：`docs/haiplatform/scripts/` 的 images 相关脚本与 `tests/images/` **尚未并入本分支**，
->   并入计划见 [images-server-task-list.md](images-server-task-list.md) §3.10；文中引用它们是**目标交付物**而非现有文件。
+> - **资产状态**：P0 资产（控制面/运行面代码、迁移 `035`、`tests/images/test_image_domain.py`、`docs/haiplatform/scripts/`
+>   下的 images 脚本）已并入本分支（S9-1）；上传通道新增 `db_schemas/036.file_type_enum_add_image.sql`、
+>   `tests/images/test_image_push*.py`、`docs/haiplatform/scripts/e2e_images_push.sh`（S8），**全部已落地**。
 
 > **文档定位**：**实施视图**。分析（[hai-cli-images-analysis.md](hai-cli-images-analysis.md)）负责「是什么」，
 > 需求（[images-server-requirements.md](images-server-requirements.md)）负责「做什么、做到什么程度」，
@@ -255,9 +259,12 @@
 | S7-3 可观测 | `image_metrics.py`、日志字段、看板与告警规则文件 | 4 指标 + 结构化日志 + 看板脚本 + 告警规则 | OBS-01~05；AC-11 | S1–S5 | 0.4 |
 | S7-4 文档与交付物 | `docs/_sources/cli/ugc.rst.txt`、`docs/_sources/guide/*`、`docs/haiplatform/README.md`、Release Note、交付清单 | 文档 diff + 归档包 | DOC-01~05；DEP-01~03；AC-14 | S6 | 0.4 |
 
-### 3.9 S8 · 上传通道（**本分支主体**，2.0 人日）
+### 3.9 S8 · 上传通道（**本分支主体**，2.0 人日）—— ✅ 已完成
 
-> **状态**：**本分支本次必须交付的主入口，尚未实现、尚未验证**（不再是「P1 可选、未开工」）。
+> **状态**：**六条子任务全部完成**（提交 `fc773e5` + 修复 D10/D11/D13），并在 103 上端到端验证通过：
+> `e2e_images_push.sh` **PASS=33 WARN=1 FAIL=0**（test-report §9.2）。
+
+> **状态**：**已完成并在 103 上验证通过**（`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`：上传闭环 + 幂等 + 开关一致性 + 负例，见 test-report §9.2）。
 > 六条子任务与设计 §14 的 S8 一一对应；`P1` 标签在本文档集中一律读作「本分支」。
 
 | 任务 | 文件清单 | 交付物 | 验收 | 依赖 | 估时 |
@@ -273,7 +280,11 @@
 > `plugins/haiworkspace` 流水线里（ADR-I11）；本分支只加 `file_type=image` 分支与客户端入口。
 > 「上传成功但登记失败」必须显式区分（FR-20），且 API-01/API-05 与 `[image].enabled` 必须**同源**（FR-19）。
 
-### 3.10 S9 · P0 资产并入与入口切换（1.0 人日）
+### 3.10 S9 · P0 资产并入与入口切换（1.0 人日）—— ✅ 已完成
+
+> **状态**：S9-1 已并入（提交 `6bc81e2`，31 个文件与旧分支逐字节一致）；S9-2 已在 103 重跑
+> （preflight `PASS=30 FAIL=0`、L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 `PASS=26 FAIL=0`、回归全绿 —— test-report §9.1）；
+> S9-3 的入口切换已落地（客户端帮助文本把 `push` 标为主入口、`load` 标为兼容旁路）。
 
 > **状态**：**本分支新增，尚未开始**。S9 是 S8 的地基：本分支基线 `33a5b26` 上 images 代码/迁移/测试/脚本都不存在，
 > 必须先把旧分支已实测通过的 P0 资产并入，再在并入基线上联调上传通道。
@@ -398,6 +409,10 @@ sudo -u fireflyer hai-cli images push /tmp/hai-image-push/demo.tar --image demo:
 | T-14 | **上传通道 E2E**：E2E-09/E2E-10 + md5 双端对比 + 开关一致性 + 幂等/续传（已 `FINISHED` 的同一 `index` 跳过、`--force` 重传） | `e2e_images_push.sh` **PASS≥10 FAIL=0**；AC-15/AC-16/AC-17/AC-18 | T-11 + S8-6 |
 
 > **T-13 与 T-14 的关系**：T-13 证明「并入没有改变 P0 行为」（起点可信），T-14 证明「上传通道在并入后的真实基线上闭环」（终点可用）。
+>
+> **执行结果（2026-10-02）**：T-13 ✅（四套输出与期望值逐项一致，见 test-report §9.1）；T-14 ✅（`e2e_images_push.sh` **PASS=33 WARN=1 FAIL=0**，见 §9.2）；
+> T-11 ✅（UP 组单测在镜像内 `43 passed`，客户端 2 条在 host `2 passed`）；T-12 ✅（并入基线上的 L1/L2/L3 + preflight 全绿）。
+> **仍未做**：FI-09~FI-11 的 stage2 故障注入（见 test-report §9.3）。
 > 两者都必须跑在**本分支基线**上，禁止用旧分支的历史输出替代。
 
 ---
@@ -451,11 +466,11 @@ sudo -u fireflyer hai-cli images push /tmp/hai-image-push/demo.tar --image demo:
 
 | 里程碑 | 判定 | 对应阶段 |
 | --- | --- | --- |
-| **M0 P0 资产并入完成**（本分支新增） | 旧分支 P0 的代码/迁移/文档/测试/脚本已并入本分支，且 L1/L2/L3 + preflight 四套输出与 test-report 一致（`33 passed` / `PASS=44 FAIL=0` / `PASS=26 FAIL=0` / `PASS=30 FAIL=0`） | S9-1 + S9-2（T-13） |
+| **M0 P0 资产并入完成**（本分支新增）✅ | 旧分支 P0 的代码/迁移/测试/脚本已并入本分支（`6bc81e2`，逐字节一致），且 L1/L2/L3 + preflight 四套输出与 test-report 一致（`33 passed` / `PASS=44 FAIL=0` / `PASS=26 FAIL=0` / `PASS=30 FAIL=0`）——**已达成** | S9-1 + S9-2（T-13）✅ |
 | **M1 控制面闭环**（旧分支已完成，经 S9-1 并入） | `images list` 能看到真实行；`load` / `delete` 不再抛 `AttributeError`；AC-02/AC-03/AC-05/AC-06/AC-07 通过 | S0–S3 + S6-1/S6-2 |
 | **M2 运行面闭环**（旧分支已完成，经 S9-1 并入） | 用自定义镜像跑通一个真实任务并产出**可区分输出**；link 脚本无 `not found`；**AC-01/AC-08/AC-09** 通过 | S4 + S5 + S6-3 |
 | **M3 可上线**（旧分支已完成，经 S9-1 并入） | 灰度开关可控、一级回滚可用、指标有数据、workspace/env 回归全绿（AC-10/AC-11/AC-12/AC-13） | S7 + S6-4 |
-| **M4 上传闭环（本分支主里程碑）** | 本地 tar 一条命令进集群：共享盘 md5 一致 + 自动登记 + 任务可区分输出；上传与控制面**同一个开关**；workspace/env push 零回归（AC-15/AC-16/AC-17/AC-18） | S8 + S9-3 + T-11/T-12/T-14 |
+| **M4 上传闭环（本分支主里程碑）✅** | 本地 tar 一条命令进集群：共享盘 md5 一致 + 自动登记 + 任务可区分输出；上传与控制面**同一个开关**；workspace/env push 零回归（AC-15/AC-16/AC-17/AC-18）——**已达成**（`e2e_images_push.sh` **PASS=33 WARN=1 FAIL=0**） | S8 + S9-3 + T-11/T-12/T-14 ✅ |
 
 ### 7.2 关键路径与估时
 

@@ -8,11 +8,15 @@
 > - **来源**：控制面（API-15~API-18）与运行面（`marsv2/scripts/link_hfai_image.sh`、`init_manager.py` 注入、`storage` 挂载种子）
 >   的设计沿用分支 `feature/hai-cli-images-server-design` 上**已实现并在 103 实测通过**的结论，证据见
 >   [images-server-test-report.md](images-server-test-report.md)（被测 tag `f2cb559`）。
-> - **状态**：上传通道（FR-16~FR-20 / 设计 §3.5·§4.6·§5.6·§6.4·§7.5·§9.5 / 用例 §4.11 UP 组 + E2E-09/10 /
->   Checklist 阶段 17）在本文档集中是**本次必须交付的主入口**（不再是「P1 可选、未开工」），**尚未实现、尚未验证**。
+> - **状态（2026-10-02 更新）**：**S9（P0 资产并入与入口切换）已完成**，并在 103 上重跑通过
+>   （preflight `PASS=30 FAIL=0`、L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 `PASS=26 FAIL=0`、workspace/env 回归全绿 —— 见
+>   [images-server-test-report.md](images-server-test-report.md) §9.1）；**S8（上传通道）已实现并端到端验证通过**
+>   （`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`：push → 共享盘 md5 一致 → `user_sync_status=finished` →
+>   `train_image=loaded` → 任务产出镜像内探针 → 幂等 → 开关一致性/一级回滚可逆 —— 见 §9.2、E2E-09/E2E-10）。
 > - **标签约定**：文中 `P0` / `P1` 只用于标注**来源与阶段**（P0 = 控制面 + 运行面，P1 = 上传通道），**不代表可选项**。
-> - **资产状态**：`docs/haiplatform/scripts/` 的 images 相关脚本与 `tests/images/` **尚未并入本分支**，
->   并入计划见 [images-server-task-list.md](images-server-task-list.md) §3.10；文中引用它们是**目标交付物**而非现有文件。
+> - **资产状态**：P0 资产（控制面/运行面代码、迁移 `035`、`tests/images/test_image_domain.py`、`docs/haiplatform/scripts/`
+>   下的 images 脚本）已并入本分支（S9-1）；上传通道新增 `db_schemas/036.file_type_enum_add_image.sql`、
+>   `tests/images/test_image_push*.py`、`docs/haiplatform/scripts/e2e_images_push.sh`（S8），**全部已落地**。
 
 > **文档定位**：任务列表 [images-server-task-list.md](images-server-task-list.md) §3.1（S0）与 §3.10（S9）的交付物，
 > 对应 Checklist [images-server-checklist.md](images-server-checklist.md) 的 **GATE-01~GATE-09**。
@@ -86,7 +90,7 @@
 
 ---
 
-## 3. Q-9 ~ Q-12：上传主入口四项决策（**建议冻结**，GATE-09）
+## 3. Q-9 ~ Q-12：上传主入口四项决策（**已冻结并实现**，GATE-09 ✅）
 
 | ID | 推荐决策 | 备选 | 影响 | 正式冻结 |
 | --- | --- | --- | --- | --- |
@@ -97,7 +101,13 @@
 
 > **展开口径**：需求/设计/用例/Checklist 中的上传通道条文**一律按上表推荐项展开**
 > （设计 §3.5 落点与 key、§5.6 改动 1、§4.6 API-19、§6.4 客户端 `images push`）。
-> 若负责人改判，只需同步 5 处：设计 §3.5 / §5.6 / §6.4、用例 TC-UP-01/03/06、Checklist 附录 A.6。
+>
+> **落地情况（2026-10-02）**：四项决策**已按推荐值冻结并实现**（提交 `fc773e5`，其后 3 处修复）：
+> `Q-9` 落点 = `{image_path}/{name}`（`cloud_storage/utils.py` 的 IMAGE 分支）·
+> `Q-10` key = `{group}/shared/images/{user}/{name}`（同处，并成为 API-01 的 STS 授权前缀）·
+> `Q-11` API-19 已上线（`api/resource/image/default.py` + `api/register/implement.py`）·
+> `Q-12` push 成功后自动 `load`（`client/api/image_api.py`，`--no-load` 可关）。
+> 端到端实测：`e2e_images_push.sh` → **PASS=33 WARN=1 FAIL=0**（[images-server-test-report.md](images-server-test-report.md) §9.2）。
 
 ---
 
@@ -195,13 +205,13 @@ busybox + 宿主 `ctr` 二进制即可完成 `ctr -n k8s.io images import`，无
 | --- | --- | --- |
 | GATE-01 | ✅ Q-1~Q-8 全部冻结（旧分支，本分支不复议） | §2 |
 | GATE-02 | ✅ Q-4 与 ADR-I3 一致；Q-3 与 ADR-I8 删除语义一致 | §2 / §5.4 |
-| GATE-03 | 🟡 接口契约冻结：API-15~API-18 ✅（旧分支逐字段对齐）；**上传通道契约（API-01/05/06 + API-19）按 Q-9~Q-12 推荐项冻结，待负责人复核** | Checklist 附录 A.1~A.4 + **A.6** |
+| GATE-03 | ✅ 契约冻结且已实现：API-15~API-18（旧分支逐字段对齐）+ **API-19 已上线**（Checklist 附录 A.6 的请求/响应逐字段落地） | Checklist 附录 A.1~A.4 + **A.6**；`api/resource/image/default.py` |
 | GATE-04 | ✅ Q-5/Q-6/Q-7 有结论且支撑 ADR-I2/I4 | §2 / §4 |
 | GATE-05 | ✅ R-2 定案：initContainer 专属挂载 | §4 |
 | GATE-06 | ✅ 零回归面清单：`conf/utils.py`、`cloud_storage/utils.py:get_base_path`、`one/one_etc/core.toml` + 上传通道的 `workspace`/`env` 语义面（CMP-07） | S9-2 重跑 + 用例 §7.2 |
 | GATE-07 | ✅ 迁移策略：`db_schemas/035`（P0，幂等 fail-soft）+ **`db_schemas/036`（本分支，`alter type file_type add value if not exists 'image'`）** | §1.1 / 迁移文件 |
 | GATE-08 | ✅ 交付范围含运行面（link 脚本 + 挂载种子 + 可配置基础镜像 + 节点前置） | §4 / `one/hai-up.sh` seed |
-| GATE-09 | 🟡 **上传主入口四项决策 Q-9~Q-12 已给推荐项并写入本文 §3**；负责人确认后转 ✅（这是 S8 的开工门槛） | §3 |
+| GATE-09 | ✅ Q-9~Q-12 已按推荐值**冻结并实现**，103 端到端验证通过（**PASS=33 WARN=1 FAIL=0**） | §3 / test-report §9.2 |
 
 ---
 
@@ -210,7 +220,10 @@ busybox + 宿主 `ctr` 二进制即可完成 `ctr -n k8s.io images import`，无
 | 阶段 | 偏差 | 回写位置 |
 | --- | --- | --- |
 | P0（旧分支实现期） | 9 个缺陷 D1~D9，其中 **D7 引出新风险 I19**（长 init 被 `unschedulable` 看门狗打断） | [images-server-test-report.md](images-server-test-report.md) §6 |
-| 本分支（S0 文档面） | 全套文档重写完成；**代码/迁移/脚本/测试尚未并入**（S9-1），**上传通道未实现**（S8） | 本文 §1.1、任务列表 §3.9/§3.10 |
+| 本分支（S9-1 并入） | 31 个 P0 文件与旧分支**逐字节一致**（`git diff 491e5ce` 为空）；确认后提交 `6bc81e2` | 任务列表 §3.10、test-report §9.1 |
+| 本分支（S9-2 重跑） | 四套输出与旧分支期望值逐项一致（30/0、33 passed、44/0、26/0、回归全绿） | test-report §9.1 |
+| 本分支（S8 实现期） | 4 个缺陷：**D10** API-19 漏 `import os` → 500；**D11** 客户端 provider 默认 `oss` vs 服务端 `s3`；**D13** stage2 落盘窗口期导致 `load` 竞态；**D12** E2E 脚本自身的列名/终态判定错误。另登记 **D14**（环境限制：静态 AK/SK 不强制 prefix → 设计 §15 R-14）与 **R-15**（越界负例留下 `stage2_running` 幂等短路） | test-report §6 / §9.2 |
+| 本分支（S8 验证） | `e2e_images_push.sh` **PASS=33 WARN=1 FAIL=0**；开关一致性、md5 一致、幂等、任务可区分输出、还原均有实测 | test-report §9.2 |
 | 后续（并入与实现期） | 任何与本文档集不符的实现偏差**必须在同一提交里回写本节** | 本节 |
 
 > 维护规则：决策一旦落地实现，就把「建议冻结」改为「已实现」并附实测证据链接；

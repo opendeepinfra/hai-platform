@@ -8,11 +8,15 @@
 > - **来源**：控制面（API-15~API-18）与运行面（`marsv2/scripts/link_hfai_image.sh`、`init_manager.py` 注入、`storage` 挂载种子）
 >   的设计沿用分支 `feature/hai-cli-images-server-design` 上**已实现并在 103 实测通过**的结论，证据见
 >   [images-server-test-report.md](images-server-test-report.md)（被测 tag `f2cb559`）。
-> - **状态**：上传通道（FR-16~FR-20 / 设计 §3.5·§4.6·§5.6·§6.4·§7.5·§9.5 / 用例 §4.11 UP 组 + E2E-09/10 /
->   Checklist 阶段 17）在本文档集中是**本次必须交付的主入口**（不再是「P1 可选、未开工」），**尚未实现、尚未验证**。
+> - **状态（2026-10-02 更新）**：**S9（P0 资产并入与入口切换）已完成**，并在 103 上重跑通过
+>   （preflight `PASS=30 FAIL=0`、L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 `PASS=26 FAIL=0`、workspace/env 回归全绿 —— 见
+>   [images-server-test-report.md](images-server-test-report.md) §9.1）；**S8（上传通道）已实现并端到端验证通过**
+>   （`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`：push → 共享盘 md5 一致 → `user_sync_status=finished` →
+>   `train_image=loaded` → 任务产出镜像内探针 → 幂等 → 开关一致性/一级回滚可逆 —— 见 §9.2、E2E-09/E2E-10）。
 > - **标签约定**：文中 `P0` / `P1` 只用于标注**来源与阶段**（P0 = 控制面 + 运行面，P1 = 上传通道），**不代表可选项**。
-> - **资产状态**：`docs/haiplatform/scripts/` 的 images 相关脚本与 `tests/images/` **尚未并入本分支**，
->   并入计划见 [images-server-task-list.md](images-server-task-list.md) §3.10；文中引用它们是**目标交付物**而非现有文件。
+> - **资产状态**：P0 资产（控制面/运行面代码、迁移 `035`、`tests/images/test_image_domain.py`、`docs/haiplatform/scripts/`
+>   下的 images 脚本）已并入本分支（S9-1）；上传通道新增 `db_schemas/036.file_type_enum_add_image.sql`、
+>   `tests/images/test_image_push*.py`、`docs/haiplatform/scripts/e2e_images_push.sh`（S8），**全部已落地**。
 
 > **文档定位**：三件套之二（分析 → **需求** → 设计）。本文只回答「**要做什么、做到什么程度算完成**」，
 > 不回答「怎么实现」（见设计文档）。所有需求均以 [hai-cli-images-analysis.md](hai-cli-images-analysis.md)
@@ -45,7 +49,7 @@
 >
 > **引用规则**：本文档集（analysis / requirements / design / test-cases / checklist / task-list / decisions / test-report）
 > 是本分支的**同一批交付物**，文中相互引用均为同批目标文件；`docs/haiplatform/scripts/` 下的 images 脚本与
-> `tests/images/` **尚未并入本分支**，一律以行内 `code` 引用并注明是目标交付物。
+> `tests/images/` **已并入本分支**（S9-1 的 P0 用例 + S8 的上传通道用例），可直接执行。
 
 ---
 
@@ -382,10 +386,10 @@
 | AC-12 | **迁移可重放**：`init_postgresql.sh` 重复执行不报错、列只加一次（含 036 的 enum 扩展） | 重放两次并对比 `\d train_image` / enum 取值 |
 | AC-13 | **兼容**：旧形态 `load <tar>`（单参）与旧 `list` 字段消费零改动可用 | 用例 TC-O 组 |
 | AC-14 | **文档一致**：分析 §6 的 I1–I18 全部在需求/设计/用例/Checklist 中有对应处置或显式「不处置」理由 | 本文 §11 追溯矩阵 + Checklist ACC |
-| AC-15 | **上传闭环（本分支发布门禁）**：本地（共享盘之外）的 tar → `images push` → 共享盘出现同一文件（**md5 一致**）→ `train_image` 有 `loaded` 行 → 用该镜像跑任务 `succeeded` 且输出可区分 | E2E-09；**主判据 = 共享盘文件 md5 与本地一致 + `train_image` 有 `loaded` 行 + 用该镜像跑任务有可区分输出**；本地目录必须在共享盘之外（避免「数据已同步」假象） |
-| AC-16 | **开关一致性**：`[image].enabled=false` 时 API-01/API-05 均 `FEATURE_DISABLED`、共享盘与对象存储**零新增写入**；恢复后同参数可用 | E2E-10 / TC-UP 组 |
-| AC-17 | **幂等与续传**：同 tar 重复 push 不重复上传（`index` 命中）、不产生重复 `train_image` 行；中断后重试/续传可成功 | TC-UP-06 / TC-UP-09 / FI-09 |
-| AC-18 | **上传通道零回归**：`workspace` / `env` 的 push/pull 行为不变（`smoke_ugc 8/8`、`e2e_workspace 19/19`、`smoke_env 20/20`、`e2e_env 16/16`） | 复用同一套脚本（用例 §7.2） |
+| AC-15 ✅ **已实测** | **上传闭环（本分支发布门禁）**：本地（共享盘之外）的 tar → `images push` → 共享盘出现同一文件（**md5 一致**）→ `train_image` 有 `loaded` 行 → 用该镜像跑任务 `succeeded` 且输出可区分 | E2E-09 已执行：`e2e_images_push.sh` **PASS=33 WARN=1 FAIL=0**（test-report §9.2）；主判据三条全部有原文输出 |
+| AC-16 ✅ **已实测** | **开关一致性**：`[image].enabled=false` 时 API-01/API-05 均 `FEATURE_DISABLED`、共享盘与对象存储**零新增写入**；恢复后同参数可用 | E2E-10 已执行（含 `upload_enabled` 独立开关）；见 test-report §9.2 |
+| AC-17 🟡 **部分实测** | **幂等与续传**：同 tar 重复 push 不重复上传（`index` 命中）、不产生重复 `train_image` 行；中断后重试/续传可成功 | 幂等部分 ✅（TC-UP-06，实测「跳过上传 + mtime 不变 + 仍 1 行」）；**「中断后重试/续传」未做故障注入**（FI-09，见 test-report §9.3） |
+| AC-18 ✅ **已实测** | **上传通道零回归**：`workspace` / `env` 的 push/pull 行为不变（`smoke_ugc 8/8`、`e2e_workspace 19/19`、`smoke_env 20/20`、`e2e_env 16/16`） | 同一套脚本在并入后的基线上全绿（test-report §9.1）；另实测手工放盘路径可还原（§9.2） |
 
 > **本分支发布门禁 = AC-15**（上传闭环）。AC-15 的**主判据**是三条实测证据缺一不可：
 > ① **共享盘文件 md5 与本地 tar 一致**；② `train_image` 存在该镜像的 **`loaded` 行**（`path` 已回填）；
@@ -403,7 +407,7 @@
 ### 7.1 路径 ①（主路径，本分支）：本地 tar → `images push` → md5 核对 → `images list` → 提交任务
 
 > 用例：**E2E-09（上传闭环）** / **E2E-10（开关一致性）**；脚本：
-> `docs/haiplatform/scripts/e2e_images_push.sh` —— **该脚本尚未并入本分支**，属目标交付物（见 §9）。
+> `docs/haiplatform/scripts/e2e_images_push.sh` —— 已随 S8 落地，实测 `PASS=33 WARN=1 FAIL=0`（见 §9 与 [images-server-test-report.md](images-server-test-report.md) §9.2）。
 
 ```
 # ① 前置：确认开关、共享根、节点前置
@@ -484,10 +488,10 @@ sudo -u fireflyer hai-cli images list -a                     # 期望：该行 s
 | Q-6 | initContainer 基础镜像用哪个？ | 改为**可配置** `manager.image_load_helper_image`，103 用节点已有的 `docker.io/library/busybox:latest` | 影响 I17② | 已在旧分支冻结（decisions §2） |
 | Q-7 | 内网 registry 在 103 是否需要部署？ | 若采纳 Q-1 的 node link，**不需要**；仅生产可选 | 影响工作量与 AC-09 | 已在旧分支冻结（decisions §2） |
 | Q-8 | 是否新增 `user_name` 列记录归属？ | **建议加**（便于审计与「谁加载的」追溯），但这与「组内共享、组内可删」不冲突 | 影响 §5.1 迁移范围 | 已在旧分支冻结（decisions §2） |
-| Q-9 | 上传对象是**单文件**（`{image_path}/<name>.tar`）还是**目录 + tar**（`{image_path}/<name>/<file>.tar`）？ | **推荐「目录 + tar」**：`cluster = {image_path}/{name}` —— `get_base_path` 的 IMAGE 分支现为 `{image_root}/{name}`（目录语义），且目录允许同名多版本/审计；单文件方案要改分支语义 | 影响 FR-17/FR-18、落点与 `load` 入参形态 | **建议冻结（推荐项）** |
-| Q-10 | S3 key 布局（`cloud_base_path`）取什么？ | **推荐 `{group}/shared/images/{user}/{name}`**，与 env 的 `{group}/shared/hfai_envs/...` 对齐；bucket 沿用 `private_bucket`（`get_bucket_name` 已天然支持） | 影响 STS 授权前缀与对象布局（SEC-08） | **建议冻结（推荐项）** |
-| Q-11 | 是否新增 API-19 预检接口？ | **推荐新增**：否则客户端只能「先传再登记」，重复上传只能靠 stage2 的 `index` 兜底，也无法在上传前告知「已在集群且已 `loaded`」 | 影响 FR-18 的体验与 S8 工作量（新增 S8-5 预检任务，估时见 [images-server-task-list.md](images-server-task-list.md) §3.9） | **建议冻结（推荐项）** |
-| Q-12 | push 成功后是否**自动 `load`**？ | **推荐自动**（提供 `--no-load`）：与用户心智一致；错误面需区分「上传失败」与「登记失败」 | 影响 §4.6 错误面与 E2E 步骤 | **建议冻结（推荐项）** |
+| Q-9 | 上传对象是**单文件**（`{image_path}/<name>.tar`）还是**目录 + tar**（`{image_path}/<name>/<file>.tar`）？ | **推荐「目录 + tar」**：`cluster = {image_path}/{name}` —— `get_base_path` 的 IMAGE 分支现为 `{image_root}/{name}`（目录语义），且目录允许同名多版本/审计；单文件方案要改分支语义 | 影响 FR-17/FR-18、落点与 `load` 入参形态 | **已冻结并实现**（提交 `fc773e5`） |
+| Q-10 | S3 key 布局（`cloud_base_path`）取什么？ | **推荐 `{group}/shared/images/{user}/{name}`**，与 env 的 `{group}/shared/hfai_envs/...` 对齐；bucket 沿用 `private_bucket`（`get_bucket_name` 已天然支持） | 影响 STS 授权前缀与对象布局（SEC-08） | **已冻结并实现**（提交 `fc773e5`） |
+| Q-11 | 是否新增 API-19 预检接口？ | **推荐新增**：否则客户端只能「先传再登记」，重复上传只能靠 stage2 的 `index` 兜底，也无法在上传前告知「已在集群且已 `loaded`」 | 影响 FR-18 的体验与 S8 工作量（新增 S8-5 预检任务，估时见 [images-server-task-list.md](images-server-task-list.md) §3.9） | **已冻结并实现**（提交 `fc773e5`） |
+| Q-12 | push 成功后是否**自动 `load`**？ | **推荐自动**（提供 `--no-load`）：与用户心智一致；错误面需区分「上传失败」与「登记失败」 | 影响 §4.6 错误面与 E2E 步骤 | **已冻结并实现**（提交 `fc773e5`） |
 
 > **冻结口径**：**Q-1~Q-8 已在旧分支冻结**（[images-server-decisions.md](images-server-decisions.md) §2，本分支不再重议）；
 > **Q-9~Q-12 为「建议冻结（推荐项）」**，**本文档集按推荐项展开**（§4.6 / §5.3 / §6 / §7 均按推荐值书写），
@@ -510,11 +514,11 @@ sudo -u fireflyer hai-cli images list -a                     # 期望：该行 s
 | 迁移（P0，随 S9 并入） | `db_schemas/035.table_train_image_alter.sql` |
 | 迁移（本分支） | `db_schemas/036.file_type_enum_add_image.sql`（`file_type` 枚举加 `image`，幂等） |
 | 客户端上传（本分支） | `images push`（复用 `plugins/haiworkspace` 的 push 实现；`--image` / `--no-load` / `--force`） |
-| 验证脚本（本分支） | `docs/haiplatform/scripts/e2e_images_push.sh`（上传闭环 + 开关一致性）——**尚未并入本分支**（目标交付物） |
+| 验证脚本（本分支） | `docs/haiplatform/scripts/e2e_images_push.sh`（上传闭环 + 开关一致性 + 负例）——**已落地并实测** |
 | 验证脚本（P0，随 S9 并入） | `docs/haiplatform/scripts/smoke_images.sh` / `e2e_images.sh` |
 
 > **资产状态与工作量口径**：上表中 `docs/haiplatform/scripts/` 下的 images 脚本与 `tests/images/`
-> **尚未并入本分支**，属**目标交付物**；并入计划见 [images-server-task-list.md](images-server-task-list.md) §3.10。
+> **已并入本分支**（S9-1 并入 P0 资产，S8 落地上传通道资产）；实测结果见 [images-server-test-report.md](images-server-test-report.md) §9.1/§9.2。
 > 本分支新增工作量合计 **3.0 人日** = **S8（上传通道，2.0）** + **S9（P0 资产并入与入口切换，1.0）**；
 > **P0 = 13.0 人日**（旧分支已完成并 103 实测通过）；**特性总计 = 16.0 人日**。
 
@@ -560,7 +564,7 @@ sudo -u fireflyer hai-cli images list -a                     # 期望：该行 s
 | HC-01..10 | 全局硬约束 | §2 / §5 / §7 / §10 | 代码评审 |
 | G1..G6 | 全局目标（P0，经 S9 并入并保不回归） | §1 / §2 | AC-01..AC-14 |
 | **—— 上传通道（本分支主入口，P1）——** | | | |
-| G7 | 上传闭环（**本分支首要目标**）：一条命令把 tar 送进集群并直接可被任务使用 | §1 / §6.4 / §14(S8) | AC-15 |
+| G7 ✅ **已达成** | 上传闭环（**本分支首要目标**）：一条命令把 tar 送进集群并直接可被任务使用 | §1 / §6.4 / §14(S8) | AC-15（已实测） |
 | FR-16 | 客户端 `images push`（`--image` / `--no-load` / `--force`，恒 `no_zip`） | §6.4 / §14(S8) | AC-15 / AC-17 |
 | FR-17 | API-01/05/06 的 `file_type=image` + `cloud_base_path`/`cluster_base_path` 单点派生 | §3.5 / §4.6 / §5.6 | AC-15 |
 | FR-18 | 落盘成功后自动登记（API-15）+ 重复 push 幂等 | §6.4 / §5.2 | AC-15 / AC-17 |

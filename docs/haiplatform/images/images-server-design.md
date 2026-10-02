@@ -8,11 +8,15 @@
 > - **来源**：控制面（API-15~API-18）与运行面（`marsv2/scripts/link_hfai_image.sh`、`init_manager.py` 注入、`storage` 挂载种子）
 >   的设计沿用分支 `feature/hai-cli-images-server-design` 上**已实现并在 103 实测通过**的结论，证据见
 >   [images-server-test-report.md](images-server-test-report.md)（被测 tag `f2cb559`）。
-> - **状态**：上传通道（FR-16~FR-20 / 设计 §3.5·§4.6·§5.6·§6.4·§7.5·§9.5 / 用例 §4.11 UP 组 + E2E-09/10 /
->   Checklist 阶段 17）在本文档集中是**本次必须交付的主入口**（不再是「P1 可选、未开工」），**尚未实现、尚未验证**。
+> - **状态（2026-10-02 更新）**：**S9（P0 资产并入与入口切换）已完成**，并在 103 上重跑通过
+>   （preflight `PASS=30 FAIL=0`、L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 `PASS=26 FAIL=0`、workspace/env 回归全绿 —— 见
+>   [images-server-test-report.md](images-server-test-report.md) §9.1）；**S8（上传通道）已实现并端到端验证通过**
+>   （`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`：push → 共享盘 md5 一致 → `user_sync_status=finished` →
+>   `train_image=loaded` → 任务产出镜像内探针 → 幂等 → 开关一致性/一级回滚可逆 —— 见 §9.2、E2E-09/E2E-10）。
 > - **标签约定**：文中 `P0` / `P1` 只用于标注**来源与阶段**（P0 = 控制面 + 运行面，P1 = 上传通道），**不代表可选项**。
-> - **资产状态**：`docs/haiplatform/scripts/` 的 images 相关脚本与 `tests/images/` **尚未并入本分支**，
->   并入计划见 [images-server-task-list.md](images-server-task-list.md) §3.10；文中引用它们是**目标交付物**而非现有文件。
+> - **资产状态**：P0 资产（控制面/运行面代码、迁移 `035`、`tests/images/test_image_domain.py`、`docs/haiplatform/scripts/`
+>   下的 images 脚本）已并入本分支（S9-1）；上传通道新增 `db_schemas/036.file_type_enum_add_image.sql`、
+>   `tests/images/test_image_push*.py`、`docs/haiplatform/scripts/e2e_images_push.sh`（S8），**全部已落地**。
 
 > **文档定位**：三件套之三（分析 → 需求 → **设计**）。本文把 [images-server-requirements.md](images-server-requirements.md)
 > 的 FR/NFR/SEC/OPS/CMP/HC 落成可实施的模块、接口、数据与脚本设计；所有需求 ID 与本文章节、用例 ID、
@@ -33,7 +37,7 @@
 > [images-server-test-report.md](images-server-test-report.md) / [images-server-task-list.md](images-server-task-list.md) /
 > [images-server-decisions.md](images-server-decisions.md) / [images-server-checklist.md](images-server-checklist.md)，
 > 正文中对它们的引用均为**相对链接**（与它们对本文的引用互指）。
-> 例外：`docs/haiplatform/scripts/` 下的 images 脚本与 `tests/images/` **尚未并入本分支**（目标交付物），正文中以行内 `code` 标注。
+> `docs/haiplatform/scripts/` 下的 images 脚本与 `tests/images/` **已并入本分支**（S9-1 并入 P0 资产 + S8 新增上传通道资产）；正文中的行内 `code` 指的就是这些已落地文件。
 >
 > **设计基调一句话**：**不新造加载协议也不新造传输层 —— 把「控制面」补齐、把「运行面」缺失的那一段补上，
 > 再把「tar 怎么上共享盘」补成一条命令（`images push`）** ——
@@ -78,7 +82,7 @@
 | 项 | 人日 | 状态 |
 | --- | --- | --- |
 | **P0**（控制面 + 运行面，旧分支 S0–S7） | ≈ **13.0**（关键路径 ≈ 9.5） | 旧分支**已实现并 103 实测通过**（tag `f2cb559`，证据见 [images-server-test-report.md](images-server-test-report.md)） |
-| **S8 上传通道** | **2.0** | **本分支必须交付**，尚未实现、尚未验证 |
+| **S8 上传通道** | **2.0** | **已完成并在 103 上验证通过**（`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`，见 test-report §9.2） |
 | **S9（P0 资产并入 + 入口切换 + 在并入基线上重跑 P0 测试）** | **1.0** | **本分支必须交付** |
 | **本分支新增合计（S8 + S9）** | **3.0** | ① 并入 P0 资产 ② 实现上传主入口 |
 | **特性总计（P0 + S8 + S9）** | **16.0** | |
@@ -435,7 +439,7 @@ Content-Type: text/plain
 
 > **现状提示**：上表中标注「新增」的文件在基线 `33a5b26` 上**均不存在**（本分支实测：
 > `marsv2/scripts/link_hfai_image.sh`、`image_metrics.py`、`db_schemas/035*`、`db_schemas/036*` 全部缺失），
-> 它们是 S9/S8 的**目标交付物**；其余「修改」类文件均存在（多为待填充的桩）。
+> 它们曾是 S9/S8 的交付物，**现已全部落地**；其余「修改」类文件在基线 `33a5b26` 上均存在（多为待填充的桩）。
 
 ### 5.2 领域层核心签名
 
@@ -727,7 +731,7 @@ app.post('/ugc/user/train_image/push_precheck')(ares_image.hfai_image_push_prech
 - ④ `db_schemas/010.table_user_downloaded_files.sql:8` 的 PG enum `file_type` 值为
   `('workspace','dataset','env','doc','pypi','website')`，**无 `image`**；
 - ⑤ `db_schemas/` 现有最大编号为 `034`，`035.table_train_image_alter.sql` 与 `036.file_type_enum_add_image.sql`
-  **均不存在**（目标交付物）；
+  **在基线 `33a5b26` 上均不存在**（已由 S9-1 并入）；
 - ⑥ **开关同源**：基线已有 `cloud_storage/service/context.py:113` 的 `check_feature_enabled(user)` 与
   `:171` 的 `check_env_push_enabled(user)`，但**没有** `check_image_enabled` —— 本设计沿用 env 的「同源开关」范式
   （HC-12），实现时优先复用 `check_feature_enabled`，对外统一以 `check_image_enabled` 命名（新 helper 或薄封装）。
@@ -1212,12 +1216,13 @@ images load（兼容旁路）─────────────────
 | **R-9**（本分支） | 大 tar（≥1 GB）上传中途失败/超时，用户看到的信息不足以定位（stage1 还是 stage2？） | 中 | 客户端输出必须以 `index` + stage 标注失败位置；服务端保留 `param_key(index)` 快照供续传（既有机制） |
 | **R-10**（本分支） | 共享盘容量被镜像 tar 吃满（P2 才做回收，FR-14） | 中 | `max_tar_bytes` 上限（OPS-07）+ 共享盘容量纳入运维监控；`delete` 不回收空间必须在帮助文本里写清 |
 | **R-11**（本分支） | `file_type` 枚举迁移（`036`）在旧库上重放失败或被跳过 | 中 | 迁移幂等（`add value if not exists`），并在 `init_postgresql.sh` 全量重放路径上验证两轮（对齐 P0 的 DB-04 做法） |
-| **R-12**（本分支） | 「上传成功但 `load` 报 `PATH_ESCAPE`」的割裂（key/cluster 布局与 `image_path` 不同源） | 中 | HC-13 + preflight 脚本（`docs/haiplatform/scripts/` 下的 images 系列，**目标交付物**）增加「`cluster_base_path` 落在 `image_path` 下」的断言 |
-| **R-13**（本分支） | P0 资产**并入新基线**时出现语义漂移（基线 `33a5b26` 已含 env 家族改动） | 中 | S9 明确要求「在并入基线上重跑 L1/L2/L3 + preflight」，旧分支结论不得直接平移（§14 S9） |
+| **R-12**（本分支） | 「上传成功但 `load` 报 `PATH_ESCAPE`」的割裂（key/cluster 布局与 `image_path` 不同源） | 中 | HC-13 + preflight 脚本（`docs/haiplatform/scripts/` 下的 images 系列，已随 S9-1 并入）增加「`cluster_base_path` 落在 `image_path` 下」的断言 |
+| **R-13**（本分支） | P0 资产**并入新基线**时出现语义漂移（基线 `33a5b26` 已含 env 家族改动） | 中 | S9 明确要求「在并入基线上重跑 L1/L2/L3 + preflight」，旧分支结论不得直接平移（§14 S9）——**已执行：S9-2 全部通过**（test-report §9.1） |
+| **R-14**（本分支，**已发生**·环境限制） | STS 授权前缀**不被存储侧强制**：自建 RustFS 走 `cloud_storage/provider/s3.py:276-293` 的「P0 降级实现」，下发静态 AK/SK（`security_token` 为空），实测可用本用户凭证写入 `hfai/shared/images/other-user/...` → **SEC-08 的「越权写必须失败」在 103 环境不可满足** | 中（内网测试环境）/ 高（多租户生产） | 代码侧无法修：生产必须接 RustFS STS（AssumeRole + inline policy）或 bucket policy；在接入前，**对象存储桶必须视为平台内部可信域**（与 `workspace`/`env` 上传同一限制）。测试脚本对该项按 **WARN** 归类并显式打印（test-report §7.4/§9.2） |
+| **R-15**（本分支，**已发生**） | `../x.tar` 这类越界相对路径会让 stage2 在**循环内**抛 `PATH_ESCAPE`，但 `user_sync_status` 已被置为 `stage2_running` 且无人收尾 → 同名同文件的后续请求会命中「上一次同步正在进行中」幂等短路（既有 `workspace` 行为，不是 images 新增） | 低 | 客户端对同一 tar 用**唯一** `index` 重试（E2E 脚本已改为每次用不同的越界文件名）；后续可考虑在 `submit_to_cluster` 的失败路径上补 `stage2_failed` 收尾 |
 
 **开放问题**：Q-1..Q-8（P0 已全部冻结，见 [images-server-decisions.md](images-server-decisions.md)）。
-**本分支上传通道新增 Q-9~Q-12 —— 以下均为「建议冻结（推荐项）」，本文档集按推荐值展开，
-正式冻结在 S0 / GATE-09**：
+**本分支上传通道新增 Q-9~Q-12 —— 已按推荐值冻结并实现（提交 `fc773e5`），103 端到端验证通过（PASS=33 WARN=1 FAIL=0）**：
 
 | ID | 问题 | **推荐值（建议冻结）** | 影响 |
 | --- | --- | --- | --- |

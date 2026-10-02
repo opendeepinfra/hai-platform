@@ -8,11 +8,15 @@
 > - **来源**：控制面（API-15~API-18）与运行面（`marsv2/scripts/link_hfai_image.sh`、`init_manager.py` 注入、`storage` 挂载种子）
 >   的设计沿用分支 `feature/hai-cli-images-server-design` 上**已实现并在 103 实测通过**的结论，证据见
 >   [images-server-test-report.md](images-server-test-report.md)（被测 tag `f2cb559`）。
-> - **状态**：上传通道（FR-16~FR-20 / 设计 §3.5·§4.6·§5.6·§6.4·§7.5·§9.5 / 用例 §4.11 UP 组 + E2E-09/10 /
->   Checklist 阶段 17）在本文档集中是**本次必须交付的主入口**（不再是「P1 可选、未开工」），**尚未实现、尚未验证**。
+> - **状态（2026-10-02 更新）**：**S9（P0 资产并入与入口切换）已完成**，并在 103 上重跑通过
+>   （preflight `PASS=30 FAIL=0`、L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 `PASS=26 FAIL=0`、workspace/env 回归全绿 —— 见
+>   [images-server-test-report.md](images-server-test-report.md) §9.1）；**S8（上传通道）已实现并端到端验证通过**
+>   （`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`：push → 共享盘 md5 一致 → `user_sync_status=finished` →
+>   `train_image=loaded` → 任务产出镜像内探针 → 幂等 → 开关一致性/一级回滚可逆 —— 见 §9.2、E2E-09/E2E-10）。
 > - **标签约定**：文中 `P0` / `P1` 只用于标注**来源与阶段**（P0 = 控制面 + 运行面，P1 = 上传通道），**不代表可选项**。
-> - **资产状态**：`docs/haiplatform/scripts/` 的 images 相关脚本与 `tests/images/` **尚未并入本分支**，
->   并入计划见 [images-server-task-list.md](images-server-task-list.md) §3.10；文中引用它们是**目标交付物**而非现有文件。
+> - **资产状态**：P0 资产（控制面/运行面代码、迁移 `035`、`tests/images/test_image_domain.py`、`docs/haiplatform/scripts/`
+>   下的 images 脚本）已并入本分支（S9-1）；上传通道新增 `db_schemas/036.file_type_enum_add_image.sql`、
+>   `tests/images/test_image_push*.py`、`docs/haiplatform/scripts/e2e_images_push.sh`（S8），**全部已落地**。
 
 ---
 
@@ -59,9 +63,9 @@
 > **方法**：只读代码审计 + **103 真实环境实测**（跑真实 `hai-cli`、直连真实 `HTTP` 接口、查真实 `psql` 表）。
 > **未修改任何源文件**。实测命令与原始输出见 §9。
 >
-> **⚠️ 阅读须知（当前工作树 vs 目标交付物）**：§1–§4.6 的代码现状描述的是**当前工作树 `33a5b26`**；
+> **⚠️ 阅读须知（基线现状 vs 本分支交付）**：§1–§4.6 的代码现状描述的是**基线工作树 `33a5b26`**；
 > 旧分支已实现的控制面（API-15~API-18）与运行面（`link_hfai_image.sh` + 挂载种子 + initContainer 修复）
-> **尚未并入本工作树**，属本分支 doc 集承接的**目标交付物**（见各 sibling 文档），因此本文照实记录其「当前未并入」状态。
+> **在基线上尚未并入**；这些交付物已由 S9-1/S8 落地到本分支（见各 sibling 文档），本文照实记录其「基线未并入」状态。
 > 本分支**新增**的上传通道（`images push`）同理：§4.7 记录缺口，交付计划见 `images-server-design.md` §3.5/§5.6/§6.4。
 
 ---
@@ -677,6 +681,9 @@ if node_schema.link_hfai_image:
 
 ## 9. 103 真实环境实测记录
 
+> **本节是「实现前」的基线探测记录**（PASS=4 FAIL=6）；实现后的端到端实测（含上传通道）见
+> [images-server-test-report.md](images-server-test-report.md) §9.1/§9.2。
+
 > **证据来源与时点**：本节全部命令与输出来自**旧分支部署**（`feature/hai-cli-images-server-design`，被测 tag `f2cb559`），
 > **本分支（`feature/hai-cli-images-rustfs-design`）尚未重跑**。原样保留以便复核与对照。
 >
@@ -840,7 +847,7 @@ $ md5sum ~/hai-platform/{client/commands/hfai_image.py,client/api/image_api.py,
 **11) 一键复现（旧分支资产，本工作树尚未并入）**
 
 旧分支把上述证据固化为一支只读脚本，可在 103 上一条命令复现。**注意：本工作树当前不存在该脚本**
-（`docs/haiplatform/scripts/probe_images.sh` 未并入本分支，属目标交付物，并入计划见
+（`docs/haiplatform/scripts/probe_images.sh` 已随 S9-1 并入本分支；历史并入计划见
 `images-server-task-list.md` §3.10），因此下列命令在**旧分支**上执行：
 
 ```bash

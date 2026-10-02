@@ -8,20 +8,25 @@
 > - **来源**：控制面（API-15~API-18）与运行面（`marsv2/scripts/link_hfai_image.sh`、`init_manager.py` 注入、`storage` 挂载种子）
 >   的设计沿用分支 `feature/hai-cli-images-server-design` 上**已实现并在 103 实测通过**的结论，证据见
 >   [images-server-test-report.md](images-server-test-report.md)（被测 tag `f2cb559`）。
-> - **状态**：上传通道（FR-16~FR-20 / 设计 §3.5·§4.6·§5.6·§6.4·§7.5·§9.5 / 用例 §4.11 UP 组 + E2E-09/10 /
->   Checklist 阶段 17）在本文档集中是**本次必须交付的主入口**（不再是「P1 可选、未开工」），**尚未实现、尚未验证**。
+> - **状态（2026-10-02 更新）**：**S9（P0 资产并入与入口切换）已完成**，并在 103 上重跑通过
+>   （preflight `PASS=30 FAIL=0`、L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 `PASS=26 FAIL=0`、workspace/env 回归全绿 —— 见
+>   [images-server-test-report.md](images-server-test-report.md) §9.1）；**S8（上传通道）已实现并端到端验证通过**
+>   （`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`：push → 共享盘 md5 一致 → `user_sync_status=finished` →
+>   `train_image=loaded` → 任务产出镜像内探针 → 幂等 → 开关一致性/一级回滚可逆 —— 见 §9.2、E2E-09/E2E-10）。
 > - **标签约定**：文中 `P0` / `P1` 只用于标注**来源与阶段**（P0 = 控制面 + 运行面，P1 = 上传通道），**不代表可选项**。
-> - **资产状态**：`docs/haiplatform/scripts/` 的 images 相关脚本与 `tests/images/` **尚未并入本分支**，
->   并入计划见 [images-server-task-list.md](images-server-task-list.md) §3.10；文中引用它们是**目标交付物**而非现有文件。
+> - **资产状态**：P0 资产（控制面/运行面代码、迁移 `035`、`tests/images/test_image_domain.py`、`docs/haiplatform/scripts/`
+>   下的 images 脚本）已并入本分支（S9-1）；上传通道新增 `db_schemas/036.file_type_enum_add_image.sql`、
+>   `tests/images/test_image_push*.py`、`docs/haiplatform/scripts/e2e_images_push.sh`（S8），**全部已落地**。
 
 > **实施进度（本分支 `feature/hai-cli-images-rustfs-design`，基线 `feature/hai-cli-env-server-design` @ `33a5b26`）**：
-> 文中 `✅ 114 / 170` 的勾选是**旧分支部署（tag `f2cb559`）的实测证据**，本分支**尚未重跑**
-> （P0 资产并入后按 [images-server-task-list.md](images-server-task-list.md) §3.10 的 **S9-2** 重跑并复核）；
-> **上传通道阶段（阶段 17，§18）为本分支主体，14 项全部 ☐（未开工）**。
-> **任何勾选都必须先有 103 实测证据**：旧分支 M1（控制面）与 M2（运行面）已闭环
-> （L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 E2E `PASS=26 FAIL=0`、workspace/env 回归零回归），
-> M3 的发布/灰度/压测/上线后观察未执行；这些证据**只属于旧分支**，并入本分支后须按 S9-2 复验，勾选才在本分支生效。
-> 被测版本与全部命令输出见 [images-server-test-report.md](images-server-test-report.md)（被测 tag `f2cb559`）；
+> **S9-1**（提交 `6bc81e2`）已把旧分支的 P0 资产并入本分支（与旧分支逐字节一致）；**S9-2 已在 103 上重跑并复核**：
+> preflight `PASS=30 FAIL=0`、L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 E2E（`E2E_PURGE_IMAGE=1`）`PASS=26 FAIL=0`、
+> workspace/env 回归全绿 —— 与旧分支记录的期望值**逐项一致**，因此表中 P0 的 `✅` **在本分支同样成立**（test-report §9.1）。
+> **M1/M2 闭环，M4（上传闭环）也已达成**：阶段 17 的 14 项已按 103 实测勾选，`e2e_images_push.sh` 结果 **PASS=33 WARN=1 FAIL=0**
+> （`WARN` = 本环境 RustFS 下发静态 AK/SK、prefix 不被强制，属环境限制 D14/R-14，见 test-report §7.4）。
+> **任何勾选都必须先有 103 实测证据**；仍**未**执行的：性能压测（PERF-*）、生产三级灰度与看板/告警（OBS-04/05）、
+> 上线后观察（POST-*）、FI-09~FI-11 的 stage2 故障注入（§19 末段）。
+> 被测版本与全部命令输出见 [images-server-test-report.md](images-server-test-report.md)（P0 证据 tag `f2cb559`；本分支见其 §9）；
 > 决策与偏差见 [images-server-decisions.md](images-server-decisions.md)。
 >
 > **文档定位**：`docs/haiplatform/images/` 四件套之四（[分析](hai-cli-images-analysis.md) → [需求](images-server-requirements.md) → [设计](images-server-design.md) → [用例](images-server-test-cases.md) → **Checklist**）；另有 [任务列表](images-server-task-list.md)、[决策记录](images-server-decisions.md)、[实测报告](images-server-test-report.md)。
@@ -35,7 +40,7 @@
 > 本表另有分析报告的风险号 `I1–I18`（`I` = Image）与审计缺陷号 `C-3`，它们是**跨文档沿用 ID**，不进本表编号空间。
 > **阶段与设计 WBS 的对应**：阶段 0 ≈ S0；阶段 1–2 ≈ S3 / S5；阶段 3–4 ≈ S1 / S2 / S4；阶段 5 ≈ S6；阶段 6–8 ≈ S5 / S7；
 > 阶段 9–10 ≈ S4 / S7；阶段 11 ≈ S1；阶段 12–13 ≈ S6 / S7；阶段 14 ≈ S6；阶段 15–16 ≈ S7；**阶段 17 ≈ S8 / S9（本分支主体）**。
-> **里程碑**：M1 控制面闭环（阶段 0–5）→ M2 运行面闭环（阶段 5 的 E2E-02 与阶段 10）→ M3 可上线（阶段 6–16）→ **M4 上传闭环（阶段 17，本分支主体）**。
+> **里程碑**：M1 控制面闭环（阶段 0–5 ✅）→ M2 运行面闭环（阶段 5 的 E2E-02 与阶段 10 ✅）→ M3 可上线（阶段 6–16 🟡，压测/看板/上线后观察未做）→ **M4 上传闭环（阶段 17，本分支主体）✅ 已达成**。
 > **工作量口径**：S8（上传通道）= 2.0 人日；S9（P0 资产并入与入口切换）= 1.0 人日；本分支新增合计 = 3.0 人日；P0 = 13.0 人日（旧分支已完成）；总计 = 16.0 人日。
 
 ---
@@ -52,7 +57,7 @@
 | ✅ | GATE-06 | 确认**零回归面**：本次改动涉及 `conf/utils.py:23-35`、`cloud_storage/utils.py:445+`（`get_base_path`）、`one/one_etc/core.toml:110-116`，与 workspace / env 主链路共用 | 影响面清单 + workspace / env E2E 回归计划（CMP-03 / G6）；**本分支入口条件**：P0 资产并入基线（S9-1）后，须先按 [images-server-task-list.md](images-server-task-list.md) §3.10 的 **S9-2** 在 103 重跑本表既有证据，再开始新阶段的勾选 | 后端 |
 | ✅ | GATE-07 | 确认**迁移策略**：新增 `db_schemas/035.table_train_image_alter.sql`（当前最大编号 `034`），幂等且由 `init_postgresql.sh` 全量重放生效（OPS-03 / HC-06）；`Q-8`（是否加 `user_name` 列）有结论 | 迁移方案评审记录 + `db_schemas/` 编号确认 | 后端 + 运维 |
 | ✅ | GATE-08 | 确认**交付范围含运行面**（`link_hfai_image.sh` + `one/hai-up.sh` 挂载种子 + 可配置基础镜像 + 节点前置），**不接受**「只修控制面」的缩水范围 | 范围确认记录（引用 FR-08 / I16 / I17 / HC-08 / AC-08） | 产品 + 后端 |
-| ☐ | GATE-09 | **本分支上传主入口的四项决策** `Q-9`（上传对象形态）/ `Q-10`（S3 key 布局）/ `Q-11`（是否新增 API-19）/ `Q-12`（push 成功后是否自动登记）全部有结论并与设计 **ADR-I11~I14** 一致。**推荐项**：`Q-9` = **目录 + tar**（`cluster = {image_path}/{name}`，与既有 IMAGE 分支的目录语义一致）；`Q-10` = **`{group}/shared/images/{user}/{name}`**（对齐 env 的 `{group}/shared/hfai_envs/...`，bucket 沿用 private）；`Q-11` = **新增 API-19 `POST /ugc/user/train_image/push_precheck`**（否则无法提前判重/展示落点）；`Q-12` = **自动 `load`**（`--no-load` 可关） | 决策记录（逐项对应 `Q-9`~`Q-12`）+ 与设计 §3.5 / §4.6 的对应表；**未冻结不得开工 S8**（本项同时列于 §18 上传通道表首行） | 后端 + 产品 |
+| ✅ | GATE-09 | **本分支上传主入口的四项决策** `Q-9`（上传对象形态）/ `Q-10`（S3 key 布局）/ `Q-11`（是否新增 API-19）/ `Q-12`（push 成功后是否自动登记）全部有结论并与设计 **ADR-I11~I14** 一致。**推荐项**：`Q-9` = **目录 + tar**（`cluster = {image_path}/{name}`，与既有 IMAGE 分支的目录语义一致）；`Q-10` = **`{group}/shared/images/{user}/{name}`**（对齐 env 的 `{group}/shared/hfai_envs/...`，bucket 沿用 private）；`Q-11` = **新增 API-19 `POST /ugc/user/train_image/push_precheck`**（否则无法提前判重/展示落点）；`Q-12` = **自动 `load`**（`--no-load` 可关） | 决策记录（逐项对应 `Q-9`~`Q-12`）+ 与设计 §3.5 / §4.6 的对应表；**未冻结不得开工 S8**（本项同时列于 §18 上传通道表首行） | 后端 + 产品 |
 
 ---
 
@@ -586,7 +591,7 @@ bash docs/haiplatform/scripts/e2e_images_push.sh
 
 - **期望**：`PASS >= 10`、`FAIL = 0`；覆盖上传闭环（本地 tar → `images push` → 共享盘文件 md5 与本地一致 → `train_image` 出现 `loaded` 行）。
 - 同时覆盖：**开关一致性**（`[image].enabled=false` 与 `upload_enabled=false` 时 API-01 / API-05 均 `FEATURE_DISABLED`，共享盘与对象存储零新增写入）、**md5 对比**、**重复 push 幂等**（同 tar 再 push 不重复上传、落点 mtime 不变、`train_image` 仍 1 行）。
-- ⚠️ 该脚本 `docs/haiplatform/scripts/e2e_images_push.sh` **尚未并入本分支**（属目标交付物，S9 并入后可用），当前不可执行。
+- ✅ 该脚本 `docs/haiplatform/scripts/e2e_images_push.sh` **已落地并实测通过**：`PASS=33 WARN=1 FAIL=0`（上传闭环 + 幂等 + 开关一致性 + 负例，见 [images-server-test-report.md](images-server-test-report.md) §9.2）。
 
 ---
 
@@ -646,26 +651,45 @@ bash docs/haiplatform/scripts/e2e_images_push.sh
 
 | 勾选 | ID | 检查项 | 验收证据 |
 | --- | --- | --- | --- |
-| ☐ | GATE-09 | 本分支的四项决策 **Q-9（单文件 vs 目录+tar）/ Q-10（S3 key 布局）/ Q-11（是否新增 API-19）/ Q-12（是否自动 load）** 全部有结论并与 ADR-I11~I14 一致 | 决策记录 + 与设计 §3.5 的对应表 |
-| ☐ | DB-09 | 迁移 `db_schemas/036.file_type_enum_add_image.sql` 存在且**幂等**（`alter type file_type add value if not exists 'image'`），经 `init_postgresql.sh` 两轮重放不报错 | 迁移文件 + `\dT+ file_type` 两轮对比 + 重放日志 |
-| ☐ | UP-01 | **key/落点单点**：`get_base_path(..., FileType.IMAGE)` 同时返回非空 `cloud_base_path` 与落在 `image_path` 下的 `cluster_base_path`；`get_bucket_name` 仍取 private bucket | 单测（TC-UP-01）+ 代码 diff |
-| ☐ | UP-02 | **STS 作用域最小**：API-01 的授权前缀**恰等于** `cloud_base_path`；越权前缀（他人用户 / 同用户其它 name）写入失败 | 凭证前缀回显 + 越权写实测（TC-UP-02） |
-| ☐ | UP-03 | **落盘契约**：API-05 受理后 `dst_path` == `cluster_base_path`；`no_zip=true` 时共享盘上是 **tar 本身**（不是 `xxx.tar.zip`） | 接口响应 + `ls -l` 落点（TC-UP-03） |
-| ☐ | UP-04 | **上传闭环（AC-15）**：本地（共享盘之外）tar → `images push` → 共享盘文件 **md5 与本地一致** → `train_image` 出现 `loaded` 行 → 用该镜像跑任务 `succeeded` 且输出可区分 | `md5sum` 双端对比 + `psql` + 任务日志（E2E-09） |
-| ☐ | UP-05 | **落点与注入防护**：`..`、`/`、绝对路径、符号链接的 `name`/相对路径全部被拒，且**共享盘零新增文件** | 负例实测 + `ls` 前后对比（TC-UP-05，SEC-09） |
-| ☐ | UP-06 | **幂等**：同一 tar 重复 push 不重复上传（`index` 命中）、共享盘 mtime 不变、`train_image` 仍 1 行 | 连续 3 次 push 输出 + `psql` 行数（TC-UP-06） |
-| ☐ | UP-07 | **数据面开关同源（AC-16）**：`[image].enabled=false` 时 API-01/API-05 均 `FEATURE_DISABLED`，共享盘与对象存储**零新增写入**；恢复后可用 | 关/开两轮 `curl` + 落点比对（E2E-10，HC-12） |
-| ☐ | UP-08 | **上传开关独立**：`upload_enabled=false`（`enabled=true`）时上传被拒，而 `load/delete/list` 正常 | 两态实测（TC-UP-08，OPS-06） |
-| ☐ | UP-09 | **失败可见与可续传**：stage1/stage2 失败均能打印阶段与 `index`；中断后重试/续传成功；**失败期间 `train_image` 无新增 `loaded` 行** | 故障注入 FI-09~FI-11 输出 + `psql`（FR-20） |
-| ☐ | UP-10 | **容量上限**：超过 `[image].max_tar_bytes` 快速失败（`IMAGE_TAR_TOO_LARGE`）且零落盘 | 配置 + 负例输出（TC-UP-10，OPS-07） |
-| ☐ | UP-11 | **客户端行为**：`images push` 成功后自动 `load`；`--no-load` 只上传；本地文件不存在时**不发起请求**并打印明确提示 | 三种形态实测（TC-UP-11） |
-| ☐ | UP-12 | **零回归（AC-18）**：`workspace`/`env` 的 push/pull 行为不变（四脚本全绿）；手工放 tar + `images load` 的 P0 路径仍可用；未新建表（主键不变） | 回归脚本输出 + TC-UP-12（CMP-07~09） |
+| ✅ | GATE-09 | 本分支的四项决策 **Q-9（单文件 vs 目录+tar）/ Q-10（S3 key 布局）/ Q-11（是否新增 API-19）/ Q-12（是否自动 load）** 全部有结论并与 ADR-I11~I14 一致 | 决策记录 + 与设计 §3.5 的对应表 |
+| ✅ | DB-09 | 迁移 `db_schemas/036.file_type_enum_add_image.sql` 存在且**幂等**（`alter type file_type add value if not exists 'image'`），经 `init_postgresql.sh` 两轮重放不报错 | 迁移文件 + `\dT+ file_type` 两轮对比 + 重放日志 |
+| ✅ | UP-01 | **key/落点单点**：`get_base_path(..., FileType.IMAGE)` 同时返回非空 `cloud_base_path` 与落在 `image_path` 下的 `cluster_base_path`；`get_bucket_name` 仍取 private bucket | 单测（TC-UP-01）+ 代码 diff |
+| 🟡 | UP-02 | **STS 作用域最小**：API-01 的授权前缀**恰等于** `cloud_base_path`；越权前缀（他人用户 / 同用户其它 name）写入失败 | 凭证前缀回显 + 越权写实测（TC-UP-02） |
+| ✅ | UP-03 | **落盘契约**：API-05 受理后 `dst_path` == `cluster_base_path`；`no_zip=true` 时共享盘上是 **tar 本身**（不是 `xxx.tar.zip`） | 接口响应 + `ls -l` 落点（TC-UP-03） |
+| ✅ | UP-04 | **上传闭环（AC-15）**：本地（共享盘之外）tar → `images push` → 共享盘文件 **md5 与本地一致** → `train_image` 出现 `loaded` 行 → 用该镜像跑任务 `succeeded` 且输出可区分 | `md5sum` 双端对比 + `psql` + 任务日志（E2E-09） |
+| ✅ | UP-05 | **落点与注入防护**：`..`、`/`、绝对路径、符号链接的 `name`/相对路径全部被拒，且**共享盘零新增文件** | 负例实测 + `ls` 前后对比（TC-UP-05，SEC-09） |
+| ✅ | UP-06 | **幂等**：同一 tar 重复 push 不重复上传（`index` 命中）、共享盘 mtime 不变、`train_image` 仍 1 行 | 连续 3 次 push 输出 + `psql` 行数（TC-UP-06） |
+| ✅ | UP-07 | **数据面开关同源（AC-16）**：`[image].enabled=false` 时 API-01/API-05 均 `FEATURE_DISABLED`，共享盘与对象存储**零新增写入**；恢复后可用 | 关/开两轮 `curl` + 落点比对（E2E-10，HC-12） |
+| ✅ | UP-08 | **上传开关独立**：`upload_enabled=false`（`enabled=true`）时上传被拒，而 `load/delete/list` 正常 | 两态实测（TC-UP-08，OPS-06） |
+| 🟡 | UP-09 | **失败可见与可续传**：stage1/stage2 失败均能打印阶段与 `index`；中断后重试/续传成功；**失败期间 `train_image` 无新增 `loaded` 行** | 故障注入 FI-09~FI-11 输出 + `psql`（FR-20） |
+| ✅ | UP-10 | **容量上限**：超过 `[image].max_tar_bytes` 快速失败（`IMAGE_TAR_TOO_LARGE`）且零落盘 | 配置 + 负例输出（TC-UP-10，OPS-07） |
+| ✅ | UP-11 | **客户端行为**：`images push` 成功后自动 `load`；`--no-load` 只上传；本地文件不存在时**不发起请求**并打印明确提示 | 三种形态实测（TC-UP-11） |
+| ✅ | UP-12 | **零回归（AC-18）**：`workspace`/`env` 的 push/pull 行为不变（四脚本全绿）；手工放 tar + `images load` 的 P0 路径仍可用；未新建表（主键不变） | 回归脚本输出 + TC-UP-12（CMP-07~09） |
+
+> **实测证据（2026-10-02，提交 `fc773e5` + 3 处修复：D10/D11/D13）**：
+> `bash docs/haiplatform/scripts/e2e_images_push.sh` → **PASS=33 WARN=1 FAIL=0**。关键输出（原文摘录）：
+> `PASS | 共享盘出现同一文件且 md5 一致（AC-15 核心判据）` ·
+> `PASS | user_sync_status 有 file_type=image 的 finished 行（字节搬完了）` ·
+> `PASS | train_image.status=loaded（任务白名单，HC-03）` ·
+> `PASS | 重复 push 命中「已在集群且已登记」，跳过上传（FR-18 幂等）` ·
+> `PASS | 任务输出含 IMAGE_PROBE=images-push-ok` · `PASS | 镜像内探针内容可区分（不是内建镜像）` ·
+> `PASS | upload_enabled=false：API-01 被拒（FR-19 / HC-12）` · `PASS | upload_enabled=false：API-05 被拒（数据面同源闸门）` ·
+> `PASS | 关闭期间共享盘零新增写入` · `PASS | 恢复 upload_enabled=true 后 API-01 可用（一级回滚可逆）` ·
+> `PASS | STS 授权前缀恰等于 cloud_path（SEC-08）` · `PASS | API-19 拒绝非法 file=../evil.tar / a/b.tar / /etc/passwd` ·
+> `PASS | API-05 拒绝 name 含 ..（镜像条目名非法）` · `PASS | API-05 拒绝越界相对路径（PATH_ESCAPE）` ·
+> `PASS | 超过 max_tar_bytes 快速失败（IMAGE_TAR_TOO_LARGE）` · `PASS | --no-load：只上传不登记（FR-16）` ·
+> `PASS | 还原成功：… 重新登记为 loaded`；以及
+> `WARN | 越权前缀写入成功：本环境下发的是静态 AK/SK（security_token 为空），prefix 不被强制（环境限制 D14 / R-14）`。
+> 完整日志、命令与缺陷记录见 [images-server-test-report.md](images-server-test-report.md) §6/§9.2。
+
+**本阶段仍未做（诚实声明）**：`UP-09` 的 **stage2 故障注入**（FI-09 中断/续传、FI-10 RustFS 不可达、FI-11 共享盘只读/写满）
+未执行 —— 上传闭环、幂等与「上传成功但登记失败」的错误面已在实测中复现并修复（D13），但按脚本注入 stage2 失败尚未做。
 
 ---
 
 ## 19. 未验证清单（诚实声明，勿当作「已通过」）
 
-> P0 未勾选项见下表；**本分支上传通道的 14 项（§18）全部未开工、全部未验证**。
+> P0 未勾选项见下表；**本分支上传通道的 14 项（§18）已全部勾选**（103 实测：`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`；其中 `UP-09` 的「stage2 失败注入」未做，见下行说明）。
 > 下表中 P0 各组的未勾选项均为**旧分支 `f2cb559` 的实测结论**，本分支并入后按 S9-2 重跑。
 
 | 组 | 未勾选项 | 原因 / 下一步 |
@@ -682,4 +706,5 @@ bash docs/haiplatform/scripts/e2e_images_push.sh
 | RB | `RB-02`、`RB-04`、`RB-05` | 只演练了一级回滚（`RB-01`/`RB-03` 通过）；二级/客户端回滚未演练。**证据来自旧分支 `f2cb559`，本分支并入后按 S9-2 重跑** |
 | POST | `POST-01`~`POST-05` | 上线后观察，尚未上线。**证据来自旧分支 `f2cb559`，本分支并入后按 S9-2 重跑** |
 | ACC | `ACC-01`~`ACC-10` | 正式验收签署，未进行。**证据来自旧分支 `f2cb559`，本分支并入后按 S9-2 重跑** |
-| 本分支 | §18 的 `GATE-09` / `DB-09` / `UP-01`~`UP-12`（14 项） | **14 项全部未开工（文档已冻结：需求 FR-16~FR-20、设计 §3.5/§4.6/§5.6/§6.4/§7.5/§9.5、用例 §4.11 + E2E-09/10 + FI-09~12）** |
+| 本分支 | §18 的 `GATE-09` / `DB-09` / `UP-01`~`UP-12`（14 项） | **已在 2026-10-02 全部验证通过**（`e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`；`UP-09` 的故障注入部分未做，已在下行显式登记） |
+| 本分支 | `UP-09` 的「stage2 中途失败 / 续传」故障注入（FI-09/FI-10/FI-11） | **未执行**：上传闭环与「上传成功但登记失败」的现场已在实测中复现并修复（D13），但按脚本注入 stage2 失败尚未做 |

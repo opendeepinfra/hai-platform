@@ -13,6 +13,7 @@ hai-cli images（用户自定义镜像）服务端接入层 —— 设计 docs/h
 
 from __future__ import annotations
 
+import os
 import time
 
 from fastapi import Depends, Request
@@ -157,7 +158,7 @@ async def hfai_image_push_precheck(request: Request, user=Depends(get_ugc_user))
     params = await _params(request)
 
     from cloud_storage.service.context import (check_image_upload_enabled, check_image_max_tar_bytes,
-                                               get_image_max_tar_bytes)
+                                               get_image_max_tar_bytes, get_provider_name)
     from cloud_storage.service.status import set_image_precheck
     from cloud_storage.utils import get_base_path, check_is_subpath
     from conf.utils import (FileType, FilePrivacy, derive_image_name, is_valid_image_name)
@@ -204,13 +205,18 @@ async def hfai_image_push_precheck(request: Request, user=Depends(get_ugc_user))
         msg = ('该 tar 已在集群且已登记，可直接提交任务'
                if (exists and registered) else
                ('该 tar 已在集群，上传可跳过' if exists else '需要上传'))
+        # provider 必须回给客户端：客户端上传时要按**同一个 provider** 去要 STS 凭证。
+        # 103 上服务端配置的是 s3/rustfs，客户端默认值 oss 会拿到
+        # 「get_sts_token returns non oss data」而直接失败（实测踩过，D11）。
+        provider_name = get_provider_name()
         logger.info(f'[IMAGE] push_precheck user={user.user_name} name={name} image={image} '
                     f'file={filename} exists={exists} registered={registered} '
-                    f'cluster={cluster_base_path} cloud={cloud_base_path}')
+                    f'provider={provider_name} cluster={cluster_base_path} cloud={cloud_base_path}')
         return {'success': 1, 'name': name, 'image': image, 'file': filename,
                 'image_tar': image_tar, 'cloud_path': cloud_base_path,
                 'cluster_path': cluster_base_path, 'exists': exists,
-                'registered': registered, 'max_tar_bytes': get_image_max_tar_bytes(), 'msg': msg}
+                'registered': registered, 'provider': provider_name,
+                'max_tar_bytes': get_image_max_tar_bytes(), 'msg': msg}
     except WorkspaceError as e:
         logger.warning(f'[IMAGE] push_precheck 失败 user={user.user_name} '
                        f'file={params.get("file")} code={e.code} msg={e.msg}')

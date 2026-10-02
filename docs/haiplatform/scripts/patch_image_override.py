@@ -41,8 +41,7 @@ IMAGE_KEYS = [
     ('containerd_socket', "'%s'" % os.environ.get('CONTAINERD_SOCKET',
                                                   '/var/snap/microk8s/common/run/containerd.sock')),
     ('runtime_bin_dir', "'%s'" % os.environ.get('RUNTIME_BIN_DIR', '/snap/microk8s/current/bin')),
-    ('runtime_lib_dir', "'%s'" % os.environ.get('RUNTIME_LIB_DIR', '/lib/x86_64-linux-gnu')),
-    ('runtime_loader_file', "'%s'" % os.environ.get('RUNTIME_LOADER_FILE', '/lib64/ld-linux-x86-64.so.2')),
+    ('runtime_lib_dir', "'%s'" % os.environ.get('RUNTIME_LIB_DIR', '/usr/lib/x86_64-linux-gnu')),
     ('image_mount_root', "'%s'" % IMAGE_ROOT),
 ]
 

@@ -63,7 +63,7 @@ BACKEND="$(img loader_backend)"
 [ "${BACKEND}" = "register" ] && ok "[image].loader_backend=register" || warn "[image].loader_backend=${BACKEND}（P0 只实现 register）"
 HELPER="$(img load_helper_image)"
 [ -n "${HELPER}" ] && ok "[image].load_helper_image=${HELPER}" || bad "[image].load_helper_image 为空（initContainer 会 ImagePullBackOff）"
-for key in data_local_path containerd_socket runtime_bin_dir runtime_lib_dir runtime_loader_file image_mount_root; do
+for key in data_local_path containerd_socket runtime_bin_dir runtime_lib_dir image_mount_root; do
   val="$(img "${key}")"
   if [ -n "${val}" ]; then ok "[image].${key}=${val}"; else warn "[image].${key} 为空（link 脚本可能拿不到运行时/共享根）"; fi
 done
@@ -100,14 +100,12 @@ echo "-- 4) 节点前置（I17 / OPS-04）"
 SOCK="$(img containerd_socket)"
 BIN="$(img runtime_bin_dir)"
 LIB="$(img runtime_lib_dir)"
-LDR="$(img runtime_loader_file)"
 for NODE in ${NODES}; do
   multipass exec "${NODE}" -- test -d /data_local 2>/dev/null && ok "${NODE}:/data_local 存在" \
     || bad "${NODE}:/data_local 缺失（hostPath 未声明 type 时 kubelet 不创建）"
   [ -n "${SOCK}" ] && { multipass exec "${NODE}" -- test -S "${SOCK}" 2>/dev/null && ok "${NODE}: containerd socket 存在" || bad "${NODE}: containerd socket 缺失 ${SOCK}"; }
   [ -n "${BIN}" ]  && { multipass exec "${NODE}" -- test -x "${BIN}/ctr" 2>/dev/null && ok "${NODE}: ${BIN}/ctr 可执行" || bad "${NODE}: ${BIN}/ctr 不存在"; }
   [ -n "${LIB}" ]  && { multipass exec "${NODE}" -- test -e "${LIB}/libdl.so.2" 2>/dev/null && ok "${NODE}: ${LIB}/libdl.so.2 存在" || bad "${NODE}: 缺 libdl.so.2（宿主 ctr 是动态链接的）"; }
-  [ -n "${LDR}" ]  && { multipass exec "${NODE}" -- test -e "${LDR}" 2>/dev/null && ok "${NODE}: loader 存在" || bad "${NODE}: loader 缺失（只挂 lib 目录会 SIGFPE）"; }
   if [ -n "${HELPER}" ]; then
     IMGS="$(multipass exec "${NODE}" -- sudo microk8s.ctr images ls -q 2>/dev/null)"
     if grep -qx "${HELPER}" <<<"${IMGS}"; then

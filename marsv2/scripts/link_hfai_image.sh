@@ -82,6 +82,22 @@ elif [ -x /host-bin/ctr ]; then
     CTR="/host-bin/ctr"
 fi
 
+# 宿主 ctr 是**动态链接**的，而 helper 镜像（busybox）自带的 glibc 与宿主版本不同
+# （实测 busybox:latest 缺 libdl.so.2；把宿主 lib 覆盖到 /lib/x86_64-linux-gnu 还会让
+#  busybox 自己的 /bin/sh 起不来）。因此 init_manager 把宿主 lib 目录挂到 **/host-lib**，
+# 这里优先用宿主 loader + --library-path 显式运行 ctr。
+LOADER=""
+LIBDIR="/host-lib"
+[ -x "${LIBDIR}/ld-linux-x86-64.so.2" ] && LOADER="${LIBDIR}/ld-linux-x86-64.so.2"
+
+ctr_run() {
+    if [ -n "${LOADER}" ]; then
+        "${LOADER}" --library-path "${LIBDIR}" "${CTR}" "$@"
+    else
+        "${CTR}" "$@"
+    fi
+}
+
 if [ -n "${CTR}" ]; then
     if [ ! -S "${SOCK}" ]; then
         log "FAILED: containerd socket 不可用: ${SOCK}"
@@ -90,25 +106,25 @@ if [ -n "${CTR}" ]; then
     fi
     # ctr 是动态链接的 Go 程序：缺 glibc/loader 时必须**显式报错**，
     # 否则外面只能看到一个 SIGSEGV/SIGFPE（103 实测：只挂 lib 目录会 exit 136）
-    if ! "${CTR}" --version >/dev/null 2>&1; then
+    if ! ctr_run --version >/dev/null 2>&1; then
         log "FAILED: ctr 无法执行（${CTR}）—— 通常是宿主 glibc 目录与 loader 未挂进 initContainer"
-        "${CTR}" --version 2>&1 | head -n 3
-        log "提示：检查 [image].runtime_lib_dir 与 [image].runtime_loader_file（MicroK8s: /lib/x86_64-linux-gnu 与 /lib64/ld-linux-x86-64.so.2）"
+        ctr_run --version 2>&1 | head -n 3
+        log "提示：检查 [image].runtime_lib_dir（MicroK8s: /usr/lib/x86_64-linux-gnu，挂到 /host-lib）"
         exit 1
     fi
     # ① 快速幂等短路：运行时已存在该镜像则直接成功
-    if "${CTR}" --address "${SOCK}" -n "${NS}" images ls -q 2>/dev/null | grep -qx "${HFAI_IMAGE}"; then
+    if ctr_run --address "${SOCK}" -n "${NS}" images ls -q 2>/dev/null | grep -qx "${HFAI_IMAGE}"; then
         log "已存在，跳过: ${HFAI_IMAGE}"
         exit 0
     fi
     log "导入: ${HFAI_IMAGE_WEKA_PATH} -> ${HFAI_IMAGE} (namespace=${NS})"
-    IMPORT_OUT="$("${CTR}" --address "${SOCK}" -n "${NS}" images import "${HFAI_IMAGE_WEKA_PATH}" 2>&1)" || {
+    IMPORT_OUT="$(ctr_run --address "${SOCK}" -n "${NS}" images import "${HFAI_IMAGE_WEKA_PATH}" 2>&1)" || {
         log "FAILED: ctr images import 失败"
         echo "${IMPORT_OUT}"
         exit 1
     }
     echo "${IMPORT_OUT}"
-    if "${CTR}" --address "${SOCK}" -n "${NS}" images ls -q 2>/dev/null | grep -qx "${HFAI_IMAGE}"; then
+    if ctr_run --address "${SOCK}" -n "${NS}" images ls -q 2>/dev/null | grep -qx "${HFAI_IMAGE}"; then
         log "OK: ${HFAI_IMAGE}"
         exit 0
     fi
@@ -116,14 +132,14 @@ if [ -n "${CTR}" ]; then
     IMPORTED="$(echo "${IMPORT_OUT}" | awk '/^unpacking /{print $2}' | tail -n 1)"
     if [ -n "${IMPORTED}" ]; then
         log "补 tag: ${IMPORTED} -> ${HFAI_IMAGE}"
-        if "${CTR}" --address "${SOCK}" -n "${NS}" images tag "${IMPORTED}" "${HFAI_IMAGE}" >/dev/null 2>&1; then
+        if ctr_run --address "${SOCK}" -n "${NS}" images tag "${IMPORTED}" "${HFAI_IMAGE}" >/dev/null 2>&1; then
             log "OK: ${HFAI_IMAGE}"
             exit 0
         fi
         log "FAILED: ctr images tag 失败"
     fi
     log "FAILED: 导入后仍未找到镜像 ${HFAI_IMAGE}"
-    "${CTR}" --address "${SOCK}" -n "${NS}" images ls -q 2>/dev/null | tail -n 10
+    ctr_run --address "${SOCK}" -n "${NS}" images ls -q 2>/dev/null | tail -n 10
     exit 1
 fi
 

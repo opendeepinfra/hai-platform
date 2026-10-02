@@ -358,5 +358,7 @@ def test_link_script_contract():
         content = f.read()
     assert subprocess.run(['sh', '-n', script], capture_output=True).returncode == 0
     assert 'HFAI_IMAGE' in content and 'HFAI_IMAGE_WEKA_PATH' in content
-    assert '$1' not in content and '$@' not in content and '"$*"' not in content
+    # 不接受任何用户可控命令行参数：显式拒绝 + 不使用 $1
+    assert '"$#" -ne 0' in content and '不接受任何命令行参数' in content
+    assert '$1' not in content and '"$*"' not in content
     assert 'exit 0' in content

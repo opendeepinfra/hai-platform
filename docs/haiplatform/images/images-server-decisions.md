@@ -58,14 +58,17 @@
 | --- | --- | --- |
 | `containerd_socket` | 节点 containerd socket（以 `Socket` 类型 hostPath 挂到 initContainer 的 `/run/containerd/containerd.sock`） | `/var/snap/microk8s/common/run/containerd.sock` |
 | `runtime_bin_dir` | 提供 `ctr` 的宿主目录（只读挂到 `/host-bin`，脚本优先用 PATH 里的 `ctr`，否则用 `/host-bin/ctr`） | `/snap/microk8s/current/bin` |
-| `runtime_lib_dir` | 宿主 glibc 目录（只读挂到 `/lib/x86_64-linux-gnu`）—— 宿主 `ctr` 是**动态链接**的，busybox 自带的 glibc 缺 `libdl.so.2` | `/lib/x86_64-linux-gnu` |
-| `runtime_loader_file` | 宿主 loader（`File` 类型只读挂到 `/lib64/ld-linux-x86-64.so.2`）—— 只挂 lib 目录会因 loader/libc 版本混用而 `SIGFPE`（实测 exit 136） | `/lib64/ld-linux-x86-64.so.2` |
+| `runtime_lib_dir` | 宿主 glibc 目录（只读挂到 **`/host-lib`**）—— 宿主 `ctr` 是**动态链接**的，helper 镜像自带的 glibc 版本不匹配；link 脚本用 `/host-lib/ld-linux-x86-64.so.2 --library-path /host-lib` 显式运行 ctr | `/usr/lib/x86_64-linux-gnu` |
 | `image_mount_root` | 镜像 tar 所在共享根，**按同一路径**挂进 initContainer（`HFAI_IMAGE_WEKA_PATH` 就在其下） | `/nfs-shared/hai-platform/workspace/image`（见 §4.2） |
 
-**实测依据（103，`microk8s.ctr run` 等价复现）**：
+**实测依据（103 三档对照，先 `microk8s.ctr run` 等价复现，再在真实任务 pod 上验收）**：
 ① 只挂 `ctr` + socket → `error while loading shared libraries: libdl.so.2`；
-② 只加挂 `/lib/x86_64-linux-gnu` → `exit 136`（SIGFPE，loader 与 libc 版本混用）；
-③ 再加挂宿主 loader → `ctr images ls` 正常输出。三档对照即上表四行配置的来源。
+② 把宿主 lib 目录挂到 `/lib/x86_64-linux-gnu` → **initContainer 直接失败**：
+   `/bin/sh: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.38' not found (required by /bin/sh)`
+   —— helper 镜像（busybox:latest，Debian trixie / glibc 2.41）自己的 `/bin/sh` 依赖被覆盖的 `libc`；
+③ 改为把宿主 lib 目录挂到**另一个路径** `/host-lib`，并用宿主 loader 显式运行 ctr
+   （`/host-lib/ld-linux-x86-64.so.2 --library-path /host-lib /host-bin/ctr …`）→ `ctr images ls` 正常、
+   helper 镜像自身不受影响。这就是最终 R-2 方案（也是 `runtime_loader_file` 被移除的原因）。
 
 **为什么不用「把 socket 登记为 mount_point（storage 行）」**：storage 行是**任务级**挂载，
 会同时把节点运行时 socket 挂进**主容器**（违反 SEC-07 最小权限，也扩大攻击面）。

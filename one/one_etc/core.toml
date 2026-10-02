@@ -174,11 +174,10 @@ data_local_path = '/data_local'
 # 运行期 link 脚本访问节点容器运行时的通路（R-2）：按部署环境填写，留空表示不额外挂载
 #   containerd_socket ：节点 containerd socket（MicroK8s: /var/snap/microk8s/common/run/containerd.sock）
 #   runtime_bin_dir   ：提供 ctr 二进制的宿主目录（MicroK8s: /snap/microk8s/current/bin）
-#   runtime_lib_dir   ：宿主 glibc 目录（宿主 ctr 是**动态链接**的，busybox 自带的 glibc 缺 libdl）
-#   runtime_loader_file：宿主 loader（与上一条配套；只挂 lib 目录会 SIGFPE）
+#   runtime_lib_dir   ：宿主 glibc 目录（挂到 /host-lib；宿主 ctr 是**动态链接**的，helper 镜像自带的
+#                       glibc 版本通常不匹配，link 脚本会用 /host-lib 里的 loader 显式运行 ctr）
 #   image_mount_root  ：镜像 tar 所在共享根，按同路径挂进 initContainer（通常等于 image_path）
 containerd_socket = ''
 runtime_bin_dir = ''
 runtime_lib_dir = ''
-runtime_loader_file = ''
 image_mount_root = ''

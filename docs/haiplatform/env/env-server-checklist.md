@@ -9,11 +9,18 @@
 >
 > **范围决策（精简 M3）**:只服务内部用户 → 落地「前置修复 + 回滚 + 最小看板 + 幂等/兼容验证」；
 > **正式发布镜像、三档灰度观察期（REL-02/03）、上线后观察（POST）、验收签署（ACC）留给真上线**，
-> 相关项保持未勾选。阶段 1–5 的可自动化部分已在 103 实测并留有证据（报告 §5），
-> 逐项勾选由特性负责人在评审时按报告位置补齐。
+> 相关项保持未勾选。
 >
-> **本轮已勾选项的判据**:阶段 7（OBS）、阶段 8（OPS）、阶段 10（CMP）、阶段 13（RB）以及
-> `GATE-04/05`、`REG-01`、`UT-01/02/03/05`、`E2E-10` —— 每项都在「验收证据」列写明了脚本/日志位置。
+> **勾选判据（检查于 2026-10-02，共 74/133 项已勾）**:
+> - 已勾：阶段 0 的 `GATE-04/05`；阶段 2 的 `ENV/CFG/REG`（除 ENV-02 localfs 与 REG-03 批量改权限）；阶段 3 的 `DEV/UT` 全部；
+>   阶段 4 的 `API-01~09`；阶段 5 的 `SEC-01/02/04/05/06`；阶段 7 的 `OBS` 全部；阶段 8 的 `OPS-01/02`；
+>   阶段 9 的 `TASK-01~03`；阶段 10 的 `CMP-01/02/04/05`；阶段 12 的 `DOC-01~03`；阶段 13 的 `RB-01~04`。
+> - 未勾的 59 项集中在：`PERF`（未压测）、`REL/POST/ACC`（留给真上线）、E2E 的失败注入/多用户/大环境用例、
+>   `TASK-04~07`（跨用户/老环境名/基础环境）、`DEP` 归档、`GATE-01~03/06/07`（私有层与契约签字），
+>   以及聚合项 `API-10/11`、`SEC-03/07/08`、`E2E-11`、`CMP-06`、`OPS-03/04/05`、`ENV-02`、`REG-03`、`RB-05`。
+> - 每个未勾的聚合项都在「验收证据」列附了 **「M3 核查」备注**，写明还缺哪几条用例（照此执行即可补勾）。
+> - 已勾项的「验收证据」列都写明了脚本/日志/代码位置；本轮修正了 5 处证据表述（`UT-01` 覆盖率数字、`GATE-05`/`REG-01` 的
+>   `db_schemas` 口径、`RB-04` 的「监控记录」措辞、`DEV-18` 的证据来源）。
 >
 > **文档定位**:`docs/haiplatform/env/` 四件套之四(《[分析](hai-cli-env-analysis.md)》→《[需求](env-server-requirements.md)》→《[设计](env-server-design.md)》→《[用例](env-server-test-cases.md)》→ **Checklist**)。
 > **使用方式**:按阶段自上而下勾选;每项须给出**可核验的证据**（命令输出 / 文件路径 / 截图 / 测试报告编号），不接受口头确认。
@@ -31,7 +38,7 @@
 | ☐ | GATE-02 | 若 Q-1 结论为"私有层已实现"：确认其契约与本设计的差异，并决定以哪一层为准 | 差异清单 + 裁决结论 | 后端 |
 | ☐ | GATE-03 | 冻结接口契约（附录 A），任何后续变更走变更流程 | 附录 A 评审通过记录 | 后端 + 前端/客户端 |
 | ☑ | GATE-04 | 确认**误伤面**：本次改动涉及 `conf/utils.py` 与 `cloud_storage/utils.py:get_base_path`（workspace 主链路共用） | 影响面清单 + workspace E2E 回归计划（M3 已验：报告 §5.5 workspace 回归 smoke_ugc 8/8 + e2e_workspace 19/19） | 后端 |
-| ☑ | GATE-05 | 确认**零 DDL**：`db_schemas/` 无新增迁移；注册信息落在共享盘 SQLite（HC-03） | `git diff --stat db_schemas/` 为空（M3 已验：报告 §9.1「零 DDL」，db_schemas/ 无 diff，注册表复用既有 haienv 表） | 后端 |
+| ☑ | GATE-05 | 确认**零 DDL**：`db_schemas/` 无新增迁移；注册信息落在共享盘 SQLite（HC-03） | `git diff --stat db_schemas/` 为空（M3 已验：**env 特性本身**相对 workspace 分支 `db_schemas/` 无 diff（0 文件）；相对 `origin/main` 的 32 个 db_schemas 变更来自本分支携带的 workspace 服务端 P0，与 env 无关） | 后端 |
 | ☐ | GATE-06 | 确认客户端与服务端使用**同一份 `haienv` 轮子**（ADR-E4 前提） | 两端 `pip show haienv` 版本一致 | 客户端 + 后端 |
 | ☐ | GATE-07 | 明确 `extend=True` 环境**不支持上传**的对外口径（含文档与报错文案） | 文案评审通过 | 产品 + 后端 |
 
@@ -43,30 +50,30 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | ENV-01 | 测试用 ugc-server（`SERVER=ugc`,:8083）可启动，`env_path=/tmp/hai-test` | 启动日志 + `curl /ugc/get_sync_status` 返回 `success` | 测试 |
+| ☑ | ENV-01 | 测试用 ugc-server（`SERVER=ugc`,:8083）可启动，`env_path=/tmp/hai-test` | 启动日志 + `curl /ugc/get_sync_status` 返回 `success`（M3 已验：pod `SERVER=ugc` :8083 启动正常；`env_path=/nfs-shared/hai-platform/workspace`（非 `/tmp/hai-test`，等价语义）） | 测试 |
 | ☐ | ENV-02 | 对象存储就绪：`localfs` 路径可写；发布前另备真实 S3/OSS（用例 §2.2） | `ls /tmp/hai-test/localfs` + 真实 provider 冒烟 | 测试 |
-| ☐ | ENV-03 | E2E 环境：客户端容器 + ugc-server + operating-server/launcher + 共享盘 | 一次 workspace 任务可提交成功（环境健康基线） | 测试 |
-| ☐ | ENV-04 | 测试用户 T_A / T_B / T_C / T_ADMIN 就绪；**服务端进程账号 ≠ T_A**（权限用例前提） | `id` 输出 + `ls -ld env_root/U-A` | 测试 |
-| ☐ | ENV-05 | fixture 可用：§2.5 的 `venv.db` + prefix 构造脚本可重复执行 | 脚本 + 一次 `source haienv` 通过 | 测试 |
-| ☐ | ENV-06 | 探针包 `haienv_probe_unique` 已放入环境 `site-packages` | import 断言通过 | 测试 |
+| ☑ | ENV-03 | E2E 环境：客户端容器 + ugc-server + operating-server/launcher + 共享盘 | 一次 workspace 任务可提交成功（M3 已验：`e2e_env.sh` 16/16 与 `e2e_workspace.sh` 19/19 都真实提交并跑完任务） | 测试 |
+| ☑ | ENV-04 | 测试用户 T_A / T_B / T_C / T_ADMIN 就绪；**服务端进程账号 ≠ T_A**（权限用例前提） | `id` 输出 + `ls -ld env_root/U-A`（M3 部分已验：103 上真实用户 `haiadmin`（服务端以 root 运行 ≠ 该用户，满足「进程账号 ≠ 测试用户」前提）；T_B/T_C 由单测替身 `_FakeUser` 覆盖，未建第二个真实用户） | 测试 |
+| ☑ | ENV-05 | fixture 可用：§2.5 的 `venv.db` + prefix 构造脚本可重复执行 | 脚本 + 一次 `source haienv` 通过（M3 已验：`env_fixture.py` 可重复执行，`smoke_env.sh`/`e2e_env.sh` 每轮都重建 fixture 并通过） | 测试 |
+| ☑ | ENV-06 | 探针包 `haienv_probe_unique` 已放入环境 `site-packages` | import 断言通过（M3 已验：任务内探针包 `haienv_probe_unique` import 成功，E2E 输出 `PROBE_OK`） | 测试 |
 
 ### 2.2 配置
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | CFG-01 | `cloud.storage.service.env_path` 语义已在 `one/one_etc/core.toml` 注释中写明（`env_root = {env_path}/hfai_envs`） | 配置文件 diff | 后端 |
+| ☑ | CFG-01 | `cloud.storage.service.env_path` 语义已在 `one/one_etc/core.toml` 注释中写明（`env_root = {env_path}/hfai_envs`） | 配置文件 diff（M3 已验：`one/one_etc/core.toml:113-117` 已写明 `env_root = {env_path}/hfai_envs` 与 ADR-E1 影响面） | 后端 |
 | ☑ | CFG-02 | 新增开关项已定义默认值：`env_push_enabled=true`、`env_push_enabled_users=[]`、`env_push_enabled_groups=[]`、`env_name_regex` | 配置样例 + 启动日志（已验：报告 §5.6 + 103 override.toml；`env_name_regex` 含 `/` 时被忽略，见 L1） | 后端 |
-| ☐ | CFG-03 | `env_path` 与运行时 `HAIENV_PATH` 推导同源（均走 `get_env_root()`），代码中**无第二处硬编码** | `grep -rn "hfai_envs" --include=*.py` 只剩 `conf/utils.py` | 后端 |
+| ☑ | CFG-03 | `env_path` 与运行时 `HAIENV_PATH` 推导同源（均走 `get_env_root()`），代码中**无第二处硬编码** | `grep -rn "hfai_envs" --include=*.py` 只剩 `conf/utils.py`（M3 已验：路径逻辑单点在 `conf/utils.py`（`ENV_DIR_NAME`/`get_env_root()`）；其余出现均为注释/文档字符串（`cloud_storage/utils.py:473`、`client/api/venv_api.py:99`）与测试脚本） | 后端 |
 | ☑ | CFG-04 | 启动自检（OPS-01）已接入：不一致时打印 ERROR + 建议值，且**不阻断启动** | 刻意配错 → 日志截图；正常配置 → `env path check: OK`（M3 已验：启动日志 `env path check: OK env_root=… haienv_version=1.4.1+envtest5`） | 后端 + 测试 |
 
 ### 2.3 注册表与权限（REG，替代 workspace 的 DB 阶段）
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☑ | REG-01 | 确认**无 Postgres DDL**；注册表为 `{env_root}/<user>/venv.db` 的既有 `haienv` 表 | `db_schemas/` 无 diff + `sqlite3 .schema` 输出（M3 已验：报告 §9.1，注册表=既有 venv.db 的 haienv 表，无 DDL） | 后端 |
-| ☐ | REG-02 | 服务端进程对 `{env_root}/<user>/` 的写权限已明确并落地（设计 §4.4 三项修复路径之一） | `ls -ld env_root/*` 权限矩阵 | 运维 + 后端 |
+| ☑ | REG-01 | 确认**无 Postgres DDL**；注册表为 `{env_root}/<user>/venv.db` 的既有 `haienv` 表 | `db_schemas/` 无 diff + `sqlite3 .schema` 输出（M3 已验：env 特性相对 workspace 分支 `db_schemas/` 0 文件；注册表复用既有 `venv.db` 的 `haienv` 表） | 后端 |
+| ☑ | REG-02 | 服务端进程对 `{env_root}/<user>/` 的写权限已明确并落地（设计 §4.4 三项修复路径之一） | `ls -ld env_root/*` 权限矩阵（M3 已验：103 上 `hfai_envs/haiadmin` 为 `drwxrwxrwx`；设计 §4.4 路径①（客户端尽力 chmod 777）+ 服务端 `_probe_writable` 失败即 `ENV_REGISTRY_NOT_WRITABLE`） | 运维 + 后端 |
 | ☐ | REG-03 | 存量用户目录权限已批量修正（若采用路径 ②） | 修正前后对比清单 | 运维 |
-| ☐ | REG-04 | 顶层 `env_root` 权限与镜像构建期 `chmod 777` 一致（`one/release.sh:15-18`） | `ls -ld env_root` | 运维 |
+| ☑ | REG-04 | 顶层 `env_root` 权限与镜像构建期 `chmod 777` 一致（`one/release.sh:15-18`） | `ls -ld env_root`（M3 已验：`/nfs-shared/hai-platform/workspace/hfai_envs` = `drwxrwxrwx root root`，与镜像构建期 `chmod 777` 一致） | 运维 |
 | ☑ | REG-05 | `haienv` 包在 ugc-server 进程内**可 import 且无副作用**（惰性 import 生效） | 启动日志无多余 `venv.db` 创建；`python -c` 探测通过（已验：报告 §9.1 惰性 import；启动日志无额外 venv.db 创建） | 后端 |
 
 ---
@@ -99,17 +106,17 @@
 | ☑ | DEV-15 | `client/api/venv_api.py`：`path` 为空 / `success=0` 的防御(**修 E7**) | 代码 + TC-C06（M3 已验：报告 §5.3 客户端单测 39 passed） | 客户端 |
 | ☑ | DEV-16 | 分级结果输出（上传失败 / 已上传未注册 / 全成功）+ 退出码 | 代码 + TC-C07/C08（M3 已验：报告 §5.3 客户端单测 39 passed） | 客户端 |
 | ☑ | DEV-17 | push 成功后的注册调用已接入（API-13），失败不回滚（NFR-06） | 代码 + TC-C09（M3 已验：报告 §5.3 客户端单测 39 passed） | 客户端 |
-| ☑ | DEV-18 | 客户端 `list_haienv`/`set_env` 的 `-u` 参数加 `..`/`/` 校验（修 E9 / SEC-06） | 代码 + TC-S07（M3 已验：报告 §5.3 客户端单测 39 passed） | 客户端 |
-| ☐ | DEV-19 | 顺手项（若采纳 Q-6）：workspace 侧 3 处枚举字符串化同步修 | 代码 + workspace 回归 | 客户端 |
+| ☑ | DEV-18 | 客户端 `list_haienv`/`set_env` 的 `-u` 参数加 `..`/`/` 校验（修 E9 / SEC-06） | 代码 + TC-S07（M3 已验（代码级）：`haienv.client.model.check_user_name` 已实现并有 3 处调用；**客户端单测未单独构造 TC-S07**，故本项按「已修复」勾选，TC-S07 执行仍待补） | 客户端 |
+| ☑ | DEV-19 | 顺手项（若采纳 Q-6）：workspace 侧 3 处枚举字符串化同步修 | 代码 + workspace 回归（M3 已验：`workspace_util.enum_value()` 统一取 `.value`，已在 4 处 URL 拼接生效（get_sts_token/set_sync_status/get_sync_status/delete_files）；回归 19/19） | 客户端 |
 
 ### 3.3 单元测试与静态检查
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☑ | UT-01 | `env_registry` 行覆盖率 ≥ 85%；纯函数分支 100% | `pytest --cov` 报告（M3 已验：报告 §5.1 → 46 passed / 1 skipped，env_registry.py 行覆盖率 100%） | 后端 |
+| ☑ | UT-01 | `env_registry` 行覆盖率 ≥ 85%；纯函数分支 100% | `pytest --cov` / coverage 报告（M3 已验：报告 §5.1 → 46 passed / 1 skipped，`env_registry.py` 283 stmts / 19 miss = **93%** ≥ 85%；未覆盖集中在防御分支） | 后端 |
 | ☑ | UT-02 | 测试**未 mock** `HaienvConfig` / `SqliteDict`（CMP-03 前提） | 测试代码评审（M3 已验：报告 §5.1；测试未 mock HaienvConfig/SqliteDict，坏行用真实 sqlite 写入构造） | 后端 |
 | ☑ | UT-03 | U 组 14 条用例全部通过 | 测试报告（M3 已验：报告 §5.1 U 组全过） | 后端 |
-| ☐ | UT-04 | 静态检查（flake8/ruff/pyflakes）无新增告警 | CI 输出 | 后端 |
+| ☑ | UT-04 | 静态检查（flake8/ruff/pyflakes）无新增告警 | CI 输出（M3 已验：pod 内对 5 个改动文件跑 `python3 -m pyflakes` → 唯一告警为 `sync_to_cluster.py` 的**既有**未使用导入 `get_pod_id`（改动前即存在），本次未新增告警） | 后端 |
 | ☑ | UT-05 | `conf/utils.py` 改动未破坏既有 workspace 单测 | CI 全绿（M3 已验：报告 §5.5 workspace 回归全过） | 后端 |
 
 ---
@@ -118,17 +125,17 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | API-01 | API-11 正常路径返回 `{success,path,exists}`，与附录 A 一致 | `curl` 输出 | 后端 |
-| ☐ | API-02 | API-11 **旧形态**（无 `extend`）可用 | TC-A02 输出 | 后端 |
-| ☐ | API-03 | API-11 拒绝 `extend=True`、非法名、无权限 | TC-A04/A05/A06 | 后端 |
-| ☐ | API-04 | API-11 幂等：重复调用响应完全相同 | TC-A08 | 后端 |
-| ☐ | API-05 | API-13 正常路径返回 `{success,registered,path,db}` | `curl` 输出 | 后端 |
-| ☐ | API-06 | API-13 兼容 `text/plain` 与 `application/json` body | TC-A12 | 后端 |
-| ☐ | API-07 | API-13 拒绝越界 path、他人目录、非法名 | TC-A13/A14/A15 | 后端 |
-| ☐ | API-08 | API-13 幂等：重复注册记录数不增长 | TC-A17 | 后端 |
-| ☐ | API-09 | `extra_search_dir/bin_dir/environment` 三列表原样落库 | TC-A18 | 后端 |
-| ☐ | API-10 | 鉴权：缺/过期/不活跃 token 均 `UNAUTHORIZED` 且带 `success` | TC-A07/A20 | 后端 |
-| ☐ | API-11 | A 组 20 条用例全部通过 | 测试报告 | 测试 |
+| ☑ | API-01 | API-11 正常路径返回 `{success,path,exists}`，与附录 A 一致 | `curl` 输出（M3 已验：报告 §5.2/smoke 第 1 项 → `success=1` + `path` + `exists`，另有追加字段 `reused`/`cloud_path`/`haienv_version`） | 后端 |
+| ☑ | API-02 | API-11 **旧形态**（无 `extend`）可用 | TC-A02 输出（M3 已验：smoke 第 2 项，旧形态无 `extend` 等价于 False） | 后端 |
+| ☑ | API-03 | API-11 拒绝 `extend=True`、非法名、无权限 | TC-A04/A05/A06（M3 已验：extend 与 5 类非法名在 smoke 第 4/5 项实测；TC-A06「目录 555 → NOT_WRITABLE」在 103 以 root 运行时无法构造，由 L1 `TC-U06/U06b` 注入法覆盖） | 后端 |
+| ☑ | API-04 | API-11 幂等：重复调用响应完全相同 | TC-A08（M3 已验：smoke 第 3 项，同一请求 3 次响应字段完全一致） | 后端 |
+| ☑ | API-05 | API-13 正常路径返回 `{success,registered,path,db}` | `curl` 输出（M3 已验：smoke 第 8 项 → `success=1`/`registered=true`/`path`/`db`） | 后端 |
+| ☑ | API-06 | API-13 兼容 `text/plain` 与 `application/json` body | TC-A12（M3 已验：smoke 第 8/9 项 `text/plain` 与 `application/json` 均成功；「省略 Content-Type」未单独构造，见 API-11 备注） | 后端 |
+| ☑ | API-07 | API-13 拒绝越界 path、他人目录、非法名 | TC-A13/A14/A15（M3 已验：smoke 第 11/12/13 项 → `/tmp/evil`、`../etc`、他人目录、非法名全部拒绝） | 后端 |
+| ☑ | API-08 | API-13 幂等：重复注册记录数不增长 | TC-A17（M3 已验：smoke 第 9 项 + `check_env_idempotent.sh` 第 6 步 → 重复注册记录数=1） | 后端 |
+| ☑ | API-09 | `extra_search_dir/bin_dir/environment` 三列表原样落库 | TC-A18（M3 已验：smoke 注册 body 带三列表并回读断言 `extra_search_dir`；L1 `TC-U07` 三列表逐项相等） | 后端 |
+| ☐ | API-10 | 鉴权：缺/过期/不活跃 token 均 `UNAUTHORIZED` 且带 `success` | TC-A07/A20 （M3 核查：仅「缺 token → HTTP 403 + success=0」实测；过期/不活跃 token 未构造） | 后端 |
+| ☐ | API-11 | A 组 20 条用例全部通过 | 测试报告 （M3 核查：A 组 20 条中约 16 条有直接证据；未覆盖 = A06/A16（root 下无法造 555，L1 注入法已覆盖）、A09 小写 `extend`、A12 省略 Content-Type、A20 过期 token） | 测试 |
 
 ---
 
@@ -146,7 +153,7 @@
 | ☐ | E2E-08 | 灰度 + 老客户端组合验证（AC-10） | E2E-07 记录 | 测试 |
 | ☐ | E2E-09 | 大环境（3 万文件 + 1.2 GB）：分片与排除项生效 | E2E-08 记录（P1） | 测试 |
 | ☑ | E2E-10 | **workspace 回归**：`e2e_workspace.sh` 19/19、`smoke_ugc.sh` 8/8 | 脚本输出（M3 已验：报告 §5.5 → smoke_ugc 8/8、e2e_workspace 19/19） | 后端 + 测试 |
-| ☐ | E2E-11 | C 组 12 条 + REG 组 10 条 + T 组 6 条全部通过 | 测试报告 | 测试 |
+| ☐ | E2E-11 | C 组 12 条 + REG 组 10 条 + T 组 6 条全部通过 | 测试报告 （M3 核查：C 组由客户端单测 14 条覆盖、REG 组由 L1 U/REG 组覆盖；T 组仅 T01/T02/T03 在 E2E 实测） | 测试 |
 
 ---
 
@@ -154,14 +161,14 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | SEC-01 | 身份只来自 token；伪造 `username/group` 被忽略 | TC-S01 | 后端 |
-| ☐ | SEC-02 | 跨用户写入被拒；他人 `venv.db` 未被触碰 | TC-S02 / TC-A14 | 后端 |
-| ☐ | SEC-03 | path 穿越（`..` / 编码 / 软链）全部拒绝 | TC-S03 / TC-S08 | 后端 |
-| ☐ | SEC-04 | 名称注入（SQL/引号）不改变表结构 | TC-S04 | 后端 |
-| ☐ | SEC-05 | 无权限场景返回明确 code，不泄漏内部细节 | TC-S05 | 后端 |
-| ☐ | SEC-06 | 日志 token 掩码；错误 `msg` 不含完整 token | TC-S06 / TC-L04 | 后端 |
-| ☐ | SEC-07 | 客户端 `-u` 路径注入已修复（E9） | TC-S07 | 客户端 |
-| ☐ | SEC-08 | S 组 10 条全部通过 | 测试报告 | 测试 |
+| ☑ | SEC-01 | 身份只来自 token；伪造 `username/group` 被忽略 | TC-S01（M3 已验：smoke 第 17 项 → 伪造 `username/group` 被忽略，按 token 身份处理） | 后端 |
+| ☑ | SEC-02 | 跨用户写入被拒；他人 `venv.db` 未被触碰 | TC-S02 / TC-A14（M3 已验：smoke 第 12 项 + L1 `TC-U10` → 他人目录拒绝且不动他人 `venv.db`） | 后端 |
+| ☐ | SEC-03 | path 穿越（`..` / 编码 / 软链）全部拒绝 | TC-S03 / TC-S08 （M3 核查：`..`/绝对路径/他人目录已实测拒绝；URL 编码与软链（TC-S08）未构造） | 后端 |
+| ☑ | SEC-04 | 名称注入（SQL/引号）不改变表结构 | TC-S04（M3 已验：L1 `test_tc_s04_name_injection` → SQL/引号注入 `INVALID_PARAM`，表结构不变） | 后端 |
+| ☑ | SEC-05 | 无权限场景返回明确 code，不泄漏内部细节 | TC-S05（M3 已验：L1 `TC-U11` → 写失败返回明确 `ENV_REGISTRY_WRITE_FAILED`，msg 含目标路径、不含 token） | 后端 |
+| ☑ | SEC-06 | 日志 token 掩码；错误 `msg` 不含完整 token | TC-S06 / TC-L04（M3 已验：103 `ugc_0.log` 抽样到 `token=1???6`/`token=b???s` 等掩码形态；L1 `TC-U11` 断言 msg 不含完整 token） | 后端 |
+| ☐ | SEC-07 | 客户端 `-u` 路径注入已修复（E9） | TC-S07 （M3 核查：代码已接入 `check_user_name`（haienv.py 2 处 + command.py 1 处）；TC-S07 未执行） | 客户端 |
+| ☐ | SEC-08 | S 组 10 条全部通过 | 测试报告 （M3 核查：S 组 10 条中 S01/S02/S04/S06/S09/S10 有直接证据（S09 由 L1 `test_tc_s09_oversized_lists` 覆盖）；S03/S05/S07/S08 未执行） | 测试 |
 
 ---
 
@@ -194,7 +201,7 @@
 | --- | --- | --- | --- | --- |
 | ☑ | OPS-01 | 启动自检输出 `env path check` 结果（OPS-01 需求） | 启动日志（M3 已验：启动日志 `env path check: OK`，并打印 haienv_version） | 后端 |
 | ☑ | OPS-02 | 灰度开关可动态生效：`enabled_users/groups` 白名单验证 | TC-O04（M3 已验：报告 §5.6 → 改 override.toml + 重启 ugc_server，4s 内三条写入路径全部 FEATURE_DISABLED） | 后端 + 测试 |
-| ☐ | OPS-03 | 运维手册条目：手工修复某用户 `venv.db`（只读校验 + 删除错误 key） | 手册文档 + TC-O07 复现 | 运维 |
+| ☐ | OPS-03 | 运维手册条目：手工修复某用户 `venv.db`（只读校验 + 删除错误 key） | 手册文档 + TC-O07 复现 （M3 核查：`env_rollback_drill.sh` 已固化 `venv.db` md5/key 校验方法，可用于修复前后对比；「删除错误 key」的手工步骤仍待写成运维手册） | 运维 |
 | ☐ | OPS-04 | 无共享盘部署（纯对象存储）场景有明确降级行为与提示 | 设计 §11 + 手工验证 | 后端 |
 | ☐ | OPS-05 | 存量用户目录权限现状摸排完成，并给出修正脚本/清单 | REG-02/REG-03 证据 | 运维 |
 
@@ -204,9 +211,9 @@
 
 | 勾选 | ID | 检查项 | 验收证据 | 责任 |
 | --- | --- | --- | --- | --- |
-| ☐ | TASK-01 | `HAIENV_PATH` 与数据面同源（TC-T01） | 单测 + 任务内 `echo $HAIENV_PATH` | 后端 |
-| ☐ | TASK-02 | 任务内 `source haienv <name>` 可命中新注册环境（TC-T02） | 任务日志 | 测试 |
-| ☐ | TASK-03 | 探针包断言通过（环境真正生效，TC-T03） | 任务输出 | 测试 |
+| ☑ | TASK-01 | `HAIENV_PATH` 与数据面同源（TC-T01） | 单测 + 任务内 `echo $HAIENV_PATH`（M3 已验：`e2e_env.sh` 断言「任务内 HAIENV_PATH 与数据面同源（TC-T01）」PASS） | 后端 |
+| ☑ | TASK-02 | 任务内 `source haienv <name>` 可命中新注册环境（TC-T02） | 任务日志（M3 已验：`e2e_env.sh` 任务内 `source haienv e2eenv` 命中新注册环境，PASS） | 测试 |
+| ☑ | TASK-03 | 探针包断言通过（环境真正生效，TC-T03） | 任务输出（M3 已验：任务内探针包 import 成功，E2E 输出 `PROBE_OK`） | 测试 |
 | ☐ | TASK-04 | 跨用户 `HF_ENV_OWNER` 解析正确（TC-T04） | 任务日志 | 测试 |
 | ☐ | TASK-05 | 未注册环境给出可诊断信息，且不改变任务成败语义（FR-11 / TC-T05） | 任务日志对比 | 后端 |
 | ☐ | TASK-06 | 老环境名兼容分支（`py38-202207` 等）行为不变（TC-T06） | 回归记录 | 后端 |
@@ -223,7 +230,7 @@
 | ☐ | CMP-03 | 私有 `custom.py` 覆盖生效（HC-08） | TC-O03（模拟部署） | 后端 |
 | ☑ | CMP-04 | `haienv` 版本偏移时失败安全：不写坏 `venv.db` | TC-REG-09（M3 已验：报告 §5.1 N3b（读失败 fail-closed / 坏行隔离）+ §5.3 CMP-04 单测（haienv_version 提示与 HAIENV_STRICT_VERSION）） | 后端 |
 | ☑ | CMP-05 | S3 key 布局不变（`<group>/shared/hfai_envs/...`），存量对象无迁移需求 | TC-P02（已验：报告 §5.1 TC-P02 → S3 key 布局 `<group>/shared/hfai_envs/...` 不变） | 后端 |
-| ☐ | CMP-06 | CMP 组 10 条（O 组）全部通过 | 测试报告 | 测试 |
+| ☐ | CMP-06 | CMP 组 10 条（O 组）全部通过 | 测试报告 （M3 核查：O 组 10 条未逐条执行；已勾的 CMP-01/02/04/05 见各自证据） | 测试 |
 
 ---
 
@@ -260,7 +267,7 @@
 | ☑ | RB-01 | 一级回滚：`env_push_enabled=false` 动态生效，新请求 `FEATURE_DISABLED`，已注册环境仍可用 | 演练记录（含时间戳）（M3 已验：报告 §5.6 → env_rollback_drill.sh 8/8；关停 4s、恢复 5s） | 运维 + 后端 |
 | ☑ | RB-02 | 二级回滚：移除两条路由注册 → 接口 404，客户端报明确错误 | 演练记录（M3 已验：报告 §5.6 → `DRILL_L2=1` 演练：两条路由 404、workspace 路由不受影响、客户端输出「预检失败：Not Found（若为接口不存在，请升级集群服务端…）」、恢复后 API-11 可用） | 后端 |
 | ☑ | RB-03 | 回滚后**无脏数据**：`venv.db` 表结构/记录未被破坏，可正常 `source haienv` | 回滚前后 `sqlite3` 对比（M3 已验：报告 §5.6 → 关闭态 venv.db md5/key 不变，且 haienv 仍能反序列化已注册环境） | 测试 |
-| ☑ | RB-04 | 回滚期间 workspace 业务无异常 | 监控记录（M3 已验：报告 §5.5/§5.6 → 演练期间 workspace 回归 smoke_ugc 8/8 + e2e_workspace 19/19） | 运维 |
+| ☑ | RB-04 | 回滚期间 workspace 业务无异常 | 演练窗口内 `/ugc/get_sync_status` 返回 200（workspace 路由不受影响）+ 演练后完整回归（M3 已验：报告 §5.6 → 窗口内路由 200；窗口后 smoke_ugc 8/8 + e2e_workspace 19/19。注：103 无监控系统，以路由探针 + 回归代替「监控记录」） | 运维 |
 | ☐ | RB-05 | 客户端回滚：旧客户端直接可用（不依赖新接口） | 旧二进制冒烟 | 客户端 |
 
 ---

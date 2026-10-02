@@ -25,7 +25,10 @@ GRP="${GRP:-hfai}"
 IMAGE_NAME="${IMAGE_NAME:-demo:v1}"
 IMG_URL="${IMG_URL:-${REGISTRY}/${GRP}/${IMAGE_NAME}}"
 TASK_NAME="${TASK_NAME:-images_e2e_probe}"
-TASK_WAIT="${TASK_WAIT:-60}"          # 轮询次数（每次 10s）
+TASK_WAIT="${TASK_WAIT:-120}"         # 轮询次数（每次 10s）；首次导入大 tar 可能要几分钟
+# E2E_PURGE_IMAGE=1：提交前把镜像从三个节点的 containerd 里删掉，强制走一次真实导入
+# （用于验证「长 init 不会被 unschedulable 看门狗打断」这一修复；默认 0 走幂等短路）
+E2E_PURGE_IMAGE="${E2E_PURGE_IMAGE:-0}"
 PROBE_MARKER="${PROBE_MARKER:-IMAGE_PROBE=images-load-ok}"
 
 PASS=0; FAIL=0
@@ -82,6 +85,14 @@ done
 log "--- 1) 清场并 load（显式 --image ${IMAGE_NAME}）"
 psql_q "delete from train_image where image_tar='${TAR}'" >/dev/null 2>&1 || true
 as_user env HOME=/home/fireflyer hai-cli images delete "${IMG_URL}" >/dev/null 2>&1 || true
+if [ "${E2E_PURGE_IMAGE}" = "1" ]; then
+  log "--- 1.0) 强制重新导入：从三个节点的 containerd 删除 ${IMG_URL}"
+  for NODE in k8s-slave01 k8s-slave02 k8s-slave03; do
+    multipass exec "${NODE}" -- sudo microk8s.ctr -n k8s.io images rm "${IMG_URL}" >/dev/null 2>&1 \
+      && info "${NODE}: 已删除" || info "${NODE}: 本来就没有"
+  done
+fi
+
 LOAD_LOG=/tmp/e2e_images_load.log
 as_user env HOME=/home/fireflyer hai-cli images load "${TAR}" --image "${IMAGE_NAME}" > "${LOAD_LOG}" 2>&1
 RC=$?
@@ -126,11 +137,25 @@ log "提交 exit=${RC}"; tail -n 5 /tmp/e2e_images_submit.log | tee -a "${LOG}"
 if [ "${RC}" = "0" ]; then ok "任务提交成功（3 段 URL + status='loaded' 校验通过，K1~K3）"; else bad "任务提交失败（exit=${RC}）"; fi
 
 STATUS_JSON=/tmp/e2e_images_status.json
+INIT_LOG=/tmp/e2e_images_init.log
+: > "${INIT_LOG}"
+rm -f /tmp/e2e_images_init_env.txt /tmp/e2e_images_init_image.txt
 CHAIN=""
+FIRST_TASK_ID=""
 for i in $(seq 1 "${TASK_WAIT}"); do
   as_user env HOME=/home/fireflyer hai-cli status "${TASK_NAME}" -j > "${STATUS_JSON}" 2>/dev/null || true
   CHAIN=$(python3 -c "import json;print(json.load(open('${STATUS_JSON}')).get('chain_status',''))" 2>/dev/null || echo "")
-  log "  [$i] chain_status=${CHAIN}"
+  CUR_ID=$(python3 -c "import json;print(json.load(open('${STATUS_JSON}')).get('id',''))" 2>/dev/null || echo "")
+  [ -z "${FIRST_TASK_ID}" ] && FIRST_TASK_ID="${CUR_ID}"
+  # 任务 pod 生命周期很短（结束即删除），必须在运行期抓 initContainer 的证据
+  POD=$(sudo kubectl -n "${NS}" get pods --no-headers 2>/dev/null | grep -E "^${USER_NAME}-[0-9]+-0 " | awk '{print $1}' | head -1)
+  if [ -n "${POD}" ]; then
+    INIT_NAME=$(sudo kubectl -n "${NS}" get pod "${POD}" -o jsonpath='{.spec.initContainers[0].name}' 2>/dev/null)
+    sudo kubectl -n "${NS}" logs "${POD}" -c "${INIT_NAME}" >> "${INIT_LOG}" 2>/dev/null || true
+    sudo kubectl -n "${NS}" get pod "${POD}" -o jsonpath='{.spec.initContainers[0].env}' > /tmp/e2e_images_init_env.txt 2>/dev/null || true
+    sudo kubectl -n "${NS}" get pod "${POD}" -o jsonpath='{.spec.initContainers[0].image}' > /tmp/e2e_images_init_image.txt 2>/dev/null || true
+  fi
+  log "  [$i] chain_status=${CHAIN} task_id=${CUR_ID} pod=${POD:-none}"
   case "${CHAIN}" in finished|failed|stopped) break ;; esac
   sleep 10
 done
@@ -154,34 +179,35 @@ if grep -q "PROBE_FILE_CONTENT= HFAI_CUSTOM_IMAGE_PROBE\|PROBE_FILE_CONTENT=HFAI
 else
   bad "未读到镜像内探针文件内容"
 fi
-if grep -q "HFAI_IMAGE_WEKA_PATH= ${TAR}\|HFAI_IMAGE_WEKA_PATH=${TAR}" /tmp/e2e_images_task.log; then
-  ok "任务内 HFAI_IMAGE_WEKA_PATH == train_image.path（E2E-07）"
-else
-  bad "HFAI_IMAGE_WEKA_PATH 与表中 path 不一致"
+# 说明：HFAI_IMAGE / HFAI_IMAGE_WEKA_PATH 注入的是 **manager（进而 initContainer）**，
+# 不是计算容器本身；计算容器里的证据是「镜像内容」（上一断言），env 证据在第 5 步校验。
+if grep -q "HFAI_IMAGE_WEKA_PATH= None" /tmp/e2e_images_task.log; then
+  info "计算容器内看不到 HFAI_IMAGE*（属预期：它们只注入 manager/initContainer）"
 fi
 
 # ------------------------------------------------------------------ 5) initContainer（运行面证据）
-log "--- 5) 计算 pod 的 load-image initContainer（I16/HC-08）"
-TASK_POD="${USER_NAME}-${TASK_ID}-0"
-if sudo kubectl -n "${NS}" get pod "${TASK_POD}" >/dev/null 2>&1; then
-  INIT_NAME=$(sudo kubectl -n "${NS}" get pod "${TASK_POD}" -o jsonpath='{.spec.initContainers[0].name}')
-  INIT_IMG=$(sudo kubectl -n "${NS}" get pod "${TASK_POD}" -o jsonpath='{.spec.initContainers[0].image}')
-  info "initContainer name=${INIT_NAME} image=${INIT_IMG}"
-  case "${INIT_IMG}" in
-    *busybox*) ok "initContainer 使用节点已有 busybox（不再 ImagePullBackOff）" ;;
-    *registry.high-flyer.cn*) bad "initContainer 仍指向不可达的内网镜像：${INIT_IMG}" ;;
-    *) info "initContainer 使用 ${INIT_IMG}" ;;
-  esac
-  INIT_LOG=/tmp/e2e_images_init.log
-  sudo kubectl -n "${NS}" logs "${TASK_POD}" -c "${INIT_NAME}" > "${INIT_LOG}" 2>&1 || true
-  tail -n 4 "${INIT_LOG}" | tee -a "${LOG}"
-  if grep -qE "OK: ${IMG_URL}|已存在，跳过: ${IMG_URL}" "${INIT_LOG}"; then
-    ok "initContainer 成功完成 link（幂等语义可见，AC-08）"
-  else
-    bad "initContainer 日志未见 link 成功"
-  fi
+log "--- 5) 运行面证据：load-image initContainer（I16/HC-08/E2E-07）"
+INIT_IMG=$(cat /tmp/e2e_images_init_image.txt 2>/dev/null)
+info "initContainer image=${INIT_IMG:-未知}"
+case "${INIT_IMG}" in
+  *busybox*) ok "initContainer 使用节点已有 busybox（不再 ImagePullBackOff）" ;;
+  *registry.high-flyer.cn*) bad "initContainer 仍指向不可达的内网镜像：${INIT_IMG}" ;;
+  *) [ -n "${INIT_IMG}" ] && info "initContainer 使用 ${INIT_IMG}" ;;
+esac
+if grep -qE "OK: ${IMG_URL}|已存在，跳过: ${IMG_URL}" "${INIT_LOG}" 2>/dev/null; then
+  ok "initContainer 成功完成 link（可见「导入」或「已存在，跳过」，AC-08）"
 else
-  bad "未找到任务 pod ${TASK_POD}"
+  bad "未抓到 initContainer 成功日志（见 ${INIT_LOG}）"
+  tail -n 5 "${INIT_LOG}" | tee -a "${LOG}"
+fi
+if grep -q "${TAR}" /tmp/e2e_images_init_env.txt 2>/dev/null; then
+  ok "initContainer env 的 HFAI_IMAGE_WEKA_PATH == train_image.path（E2E-07）"
+else
+  bad "initContainer env 与表中 path 不一致"
+fi
+if [ -n "${FIRST_TASK_ID}" ] && [ "${FIRST_TASK_ID}" != "${TASK_ID}" ]; then
+  info "本次任务链发生过重启（首个 id=${FIRST_TASK_ID}，最终 id=${TASK_ID}）——"
+  info "  若 IMG 是首次导入，请确认 [image] 与 manager.unschedulable_timeout_Ms 的配合（见 I19）"
 fi
 
 # ------------------------------------------------------------------ 6) 删除闭环 + K5

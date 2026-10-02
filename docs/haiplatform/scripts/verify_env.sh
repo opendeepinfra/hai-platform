@@ -47,6 +47,12 @@ l1_client() {
 step l1_unit l1_unit
 step l1_client l1_client
 step l2_smoke bash "${SCRIPT_DIR}/smoke_env.sh" "${BASE}"
+step compat_idempotent bash "${SCRIPT_DIR}/check_env_idempotent.sh" "${BASE}"
+
+if [ "${SKIP_DRILL:-0}" != "1" ]; then
+  # 一级回滚演练会改 override.toml 并重启 ugc_server 两次（约 10s），默认执行
+  step rollback_drill bash "${SCRIPT_DIR}/env_rollback_drill.sh" "${BASE}"
+fi
 
 if [ "${SKIP_E2E:-0}" != "1" ]; then
   step l3_e2e bash "${SCRIPT_DIR}/e2e_env.sh" "${BASE}"

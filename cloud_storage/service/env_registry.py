@@ -97,22 +97,98 @@ def _reject_extend(extend):
 
 # --------------------------------------------------------------------------- 读注册表
 
-def _read_registry(user) -> dict:
+def _haienv_version() -> str:
     '''
-    读 {user_env_dir}/venv.db 的 haienv 表，返回 {name: HaienvConfig}。
+    当前进程内 `haienv` 包的版本（ADR-E4 的版本耦合必须是可观测的）。
 
-    只读（不创建任何文件）：db 不存在时直接返回 {}，避免 sqlite3.connect 的建文件副作用。
+    只用于日志与客户端兼容性提示，取不到时返回 'unknown'，绝不抛异常。
     '''
+    try:
+        from importlib.metadata import version as _pkg_version  # py3.8+
+        return str(_pkg_version('haienv'))
+    except Exception:
+        pass
+    try:
+        import haienv
+        return str(getattr(haienv, '__version__', 'unknown') or 'unknown')
+    except Exception:
+        return 'unknown'
+
+
+def _read_registry_rowwise(db_path: str) -> tuple:
+    '''
+    逐行读取 `haienv` 表，跳过无法反序列化的行，返回 `(registry, broken_keys)`。
+
+    只在整表 `Haienv.select` 失败时兜底调用：**单个**条目损坏/版本不一致，不应该让
+    「其余环境」也一起变得不可见（那会直接导致重复上传，N3）。
+    结构性问题（打不开库 / 表读不出来）抛 ENV_REGISTRY_READ_FAILED（fail-closed）。
+    '''
+    import sqlite3
+    try:
+        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+    except Exception as e:
+        raise WorkspaceError(
+            ErrorCode.ENV_REGISTRY_READ_FAILED,
+            f'读取集群侧注册表失败（无法打开 {db_path}）: {e}；为避免把「读不出来」误判成'
+            f'「没注册过」而产生重复环境，本次请求已停止，请运维按手册检查该文件')
+    try:
+        try:
+            rows = conn.execute('SELECT key, value FROM "haienv" ORDER BY rowid').fetchall()
+        except Exception as e:
+            if 'no such table' in str(e).lower():
+                logger.warning(f'[ENV] 注册表无 haienv 表（旧版 venv 表未迁移？）db={db_path}: {e}')
+                return {}, set()
+            raise WorkspaceError(
+                ErrorCode.ENV_REGISTRY_READ_FAILED,
+                f'读取集群侧注册表失败（{db_path}）: {e}；为避免产生重复环境，本次请求已停止，'
+                f'请运维按手册检查该文件')
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    registry, broken = {}, set()
+    for key, blob in rows:
+        try:
+            from haienv.client.sqlite_dict import SqliteDict
+            registry[key] = SqliteDict.decode(blob)
+        except Exception as e:
+            broken.add(key)
+            logger.error(f'[ENV] 注册表条目无法反序列化 key={key} db={db_path}: {e}')
+    return registry, broken
+
+
+def _read_registry(user) -> tuple:
+    '''
+    读 `{user_env_dir}/venv.db` 的 haienv 表，返回 `(registry, broken_keys)`。
+
+    - db 不存在      → `({}, set())`；只读、不创建任何文件（避免 sqlite3.connect 的建文件副作用）
+    - 正常           → `(全部条目, set())`
+    - 部分行读不出来 → `(能读出来的条目, 读不出来的 key 集合)`，并计入读失败指标
+    - 整表读不出来   → 抛 `ENV_REGISTRY_READ_FAILED`
+
+    为什么必须 fail-closed（N3）：以前这里把所有异常都吞成 `{}`，于是「注册表读不出来」
+    等价于「这个名字没注册过」→ 预检分配新后缀 → 用户每重试一次就多传一份完整环境
+    （已在 103 实测复现 `xxx_0 → xxx_1`）。宁可明确失败，也不要静默产生重复环境。
+    '''
+    from cloud_storage.metrics import env_registry_read_failures_total
+
     db_path = get_env_registry_path(user)
     if not os.path.exists(db_path):
-        return {}
+        return {}, set()
     try:
         from haienv.client.model import Haienv
         result = Haienv.select(outside_db_path=db_path)
-        return result or {}
+        return (result or {}), set()
     except Exception as e:
-        logger.warning(f'[ENV] 读取注册表失败 user={_user_name(user)} db={db_path}: {e}')
-        return {}
+        env_registry_read_failures_total.labels(reason='decode_all').inc()
+        logger.warning(f'[ENV] 整表读取注册表失败，降级为逐行读取 user={_user_name(user)} '
+                       f'db={db_path}: {e}')
+        registry, broken = _read_registry_rowwise(db_path)
+        if broken:
+            env_registry_read_failures_total.labels(reason='decode_partial').inc()
+        return registry, broken
 
 
 def _list_used_suffixes(user, env_name: str) -> set:
@@ -160,6 +236,48 @@ def _probe_writable(path: str):
             f'集群侧 env 目录 {path} 不可写（{e}），请运维检查目录权限（建议 chmod 777 该用户 env 目录）')
 
 
+# --------------------------------------------------------------------------- 目录可见性（NFS）
+
+_ENV_DIR_WAIT_DEFAULT_SECONDS = 10.0
+_ENV_DIR_WAIT_MAX_SECONDS = 120.0
+_ENV_DIR_WAIT_INTERVAL_SECONDS = 0.5
+
+
+def _isdir_wait_seconds() -> float:
+    '''
+    目录可见性等待上限（秒），可用 cloud.storage.service.env_register_isdir_wait_seconds 调整。
+    0 = 只看一次（旧行为）。
+    '''
+    from .context import cfg
+    try:
+        value = float(cfg('cloud.storage.service.env_register_isdir_wait_seconds',
+                          default=_ENV_DIR_WAIT_DEFAULT_SECONDS))
+    except Exception:
+        value = _ENV_DIR_WAIT_DEFAULT_SECONDS
+    return max(0.0, min(value, _ENV_DIR_WAIT_MAX_SECONDS))
+
+
+def _wait_for_dir(path: str, timeout: float = None) -> bool:
+    '''
+    目录可见性探测（产品侧兜底，而不是只在脚本里轮询）。
+
+    宿主与 Pod 是**不同的 NFS 客户端**，属性/负缓存彼此不同步（`lookupcache=all`、
+    `acdirmax` 默认 60s）：刚上传完落盘的目录，在 Pod 侧可能短暂看不到。这里做一次
+    有上限的轮询（默认 10s），把「缓存还没过期」与「用户真的没上传」区分开；
+    超时后仍然报错（不放松任何路径校验）。
+    '''
+    if os.path.isdir(path):
+        return True
+    if timeout is None:
+        timeout = _isdir_wait_seconds()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(min(_ENV_DIR_WAIT_INTERVAL_SECONDS, max(0.05, deadline - time.time())))
+        if os.path.isdir(path):
+            return True
+    return False
+
+
 # --------------------------------------------------------------------------- API-11 预检
 
 def _cloud_path_for(user, dir_name: str) -> str:
@@ -186,32 +304,54 @@ def derive_env_path_sync(user, venv_name, py=None, extend=None) -> dict:
     '''
     API-11 领域实现（同步）。只读 + 写权限探测，**不写注册表、不创建 env 目录**。
 
-    返回 `{'path': <集群绝对路径>, 'exists': bool, 'cloud_path': <对象存储 key 前缀>}`：
+    返回 `{'path': <集群绝对路径>, 'exists': bool, 'reused': bool,
+           'cloud_path': <对象存储 key 前缀>, 'haienv_version': <str>}`：
     - `path`       给客户端做展示与 API-13 注册（集群侧落盘目录）
+    - `exists`     **是否已注册可用**（不是「目录在不在」）；目录在但没注册仍为 False，
+                   因为那种环境下 `source haienv` 取不到配置，不能让客户端以为可以跳过上传
+    - `reused`     本次是否复用了上一次 push 的目录（幂等重试）
     - `cloud_path` 给客户端做 `--env_remote_path`（对象存储 key 前缀，basename 必须等于目录名）
+    - `haienv_version` 集群侧 haienv 版本，供客户端做版本偏移提示（ADR-E4 / CMP-04）
     '''
     check_env_push_enabled(user)
     env_name = validate_env_name(venv_name)
     _reject_extend(extend)
 
-    registry = _read_registry(user)
+    registry, broken = _read_registry(user)
     if env_name in registry:
         registered_path = getattr(registry[env_name], 'path', None)
         if registered_path:
             dir_name = os.path.basename(os.path.normpath(registered_path))
-            return {'path': registered_path, 'exists': True,
-                    'cloud_path': _cloud_path_for(user, dir_name)}
+            return {'path': registered_path, 'exists': True, 'reused': True,
+                    'cloud_path': _cloud_path_for(user, dir_name),
+                    'haienv_version': _haienv_version()}
+    if env_name in broken:
+        # N3 fail-closed：条目存在但读不出来（版本不一致/数据损坏）。此时**不能**当作
+        # 「没注册过」去分配新后缀 —— 那会再上传一份完整环境，并把注册表指向新目录。
+        raise WorkspaceError(
+            ErrorCode.ENV_REGISTRY_READ_FAILED,
+            f'环境 {env_name} 在集群侧注册表中存在，但该条目当前无法读取'
+            f'（多为服务端/客户端 haienv 版本不一致或条目损坏）；为避免产生重复环境，'
+            f'本次 push 已停止。请运维按手册检查 {get_env_registry_path(user)}')
 
     user_dir = get_user_env_dir(user)
     _probe_writable(user_dir)
 
     used = _list_used_suffixes(user, env_name)
-    suffix = 0
-    while suffix in used:
-        suffix += 1
+    if used:
+        # 幂等重试（N3）：注册表里没有这个名字，但磁盘上已经有 `{name}_{i}` 目录 —— 那是
+        # 上一次 push 留下的（上传成功但注册失败、或客户端中断）。复用**最小后缀**，让重试
+        # 写回同一目录、同一批对象 key，而不是分配新后缀把整份环境重传一遍。
+        # 语义与客户端 `get_haienv_path`（同名目录已存在则复用）一致。
+        suffix = min(used)
+        reused = True
+    else:
+        suffix = 0
+        reused = False
     dir_name = get_env_dir_name(env_name, suffix)
-    return {'path': os.path.join(user_dir, dir_name), 'exists': False,
-            'cloud_path': _cloud_path_for(user, dir_name)}
+    return {'path': os.path.join(user_dir, dir_name), 'exists': False, 'reused': reused,
+            'cloud_path': _cloud_path_for(user, dir_name),
+            'haienv_version': _haienv_version()}
 
 
 async def derive_env_path(user, venv_name, py=None, extend=None) -> dict:
@@ -310,11 +450,21 @@ def register_env_sync(user, venv_name, path, py, extra_search_dir=None,
     except Exception as e:
         raise WorkspaceError(ErrorCode.PATH_ESCAPE, f'目的路径 {path} 超出限定范围，非法！({e})')
 
-    if not os.path.isdir(path):
+    if not _wait_for_dir(path):
+        wait = int(_isdir_wait_seconds())
         raise WorkspaceError(ErrorCode.INVALID_PARAM,
-                             f'目标目录 {path} 不存在，请先完成 env 上传后再注册')
+                             f'目标目录 {path} 不存在（等待 {wait}s 后仍不可见），'
+                             f'请先完成 env 上传后再注册；若确认上传已完成，直接重试 '
+                             f'`env push` 即可（会复用同一目录与同一批对象 key，不会多占后缀）')
 
     _probe_writable(user_dir)
+
+    # N3：注册前先读一次注册表 —— 若同名条目存在但读不出来，本次写入是**修复**行为，
+    # 需要留下显著日志与指标（否则「用一个读不出来的值覆盖另一个读不出来的值」是静默的）。
+    registry, broken = _read_registry(user)
+    if env_name in broken:
+        logger.warning(f'[ENV] 注册表中原条目无法读取，本次注册将覆盖为新值 user={_user_name(user)} '
+                       f'env={env_name} db={get_env_registry_path(user)}')
 
     db_path = get_env_registry_path(user)
     started = time.time()
@@ -334,8 +484,9 @@ def register_env_sync(user, venv_name, path, py, extra_search_dir=None,
             f'写入集群侧注册表失败（{reason}）: {path}，上传的文件已保留，可直接重试 `env push` 补登记')
     elapsed_ms = int((time.time() - started) * 1000)
     logger.info(f'[ENV] 注册成功 user={_user_name(user)} env={env_name} path={path} db={db_path} '
-                f'elapsed_ms={elapsed_ms}')
-    return {'registered': True, 'path': path, 'db': db_path}
+                f'elapsed_ms={elapsed_ms} haienv_version={_haienv_version()}')
+    return {'registered': True, 'path': path, 'db': db_path,
+            'haienv_version': _haienv_version()}
 
 
 async def register_env(user, venv_name, path, py, extra_search_dir=None,
@@ -371,11 +522,15 @@ def env_registry_self_check() -> dict:
         'expected_user_env_dir': expected_user_dir,
         'cluster_base_dir': cluster_dir,
         'suggested_env_path': os.path.dirname(env_root),
+        # ADR-E4/CMP-04：注册表值是 pickle 的 HaienvConfig，版本耦合必须可见 ——
+        # 出问题时第一步就是对齐「镜像里的 haienv 版本」与「客户端 haienv 版本」。
+        'haienv_version': _haienv_version(),
     }
     if error:
         result['error'] = error
     if ok:
-        logger.info(f'env path check: OK env_root={env_root} HAIENV_PATH={expected_user_dir}')
+        logger.info(f'env path check: OK env_root={env_root} HAIENV_PATH={expected_user_dir} '
+                    f'haienv_version={result["haienv_version"]}')
     else:
         logger.error(
             'env path check: FAILED —— 数据面落盘目录与运行时 HAIENV_PATH 不同源，'

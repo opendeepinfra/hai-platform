@@ -56,6 +56,42 @@ def _resolve_workspace_bin() -> str:
     return next((c for c in candidates if c), 'haiworkspace')
 
 
+def _base_version(text) -> str:
+    '''取版本的基础部分（`1.4.1+e3c42c` → `1.4.1`）：带 git rev 的完整版本几乎总不相同。'''
+    return str(text or '').split('+')[0].split('-')[0].strip()
+
+
+def _local_haienv_version() -> str:
+    '''本机 haienv 版本；取不到返回空串（不阻断主流程）。'''
+    try:
+        from importlib.metadata import version as _pkg_version
+        return str(_pkg_version('haienv'))
+    except Exception:
+        pass
+    try:
+        import haienv
+        return str(getattr(haienv, '__version__', '') or '')
+    except Exception:
+        return ''
+
+
+def _version_note(server_version: str) -> str:
+    '''
+    版本偏移提示（ADR-E4 / CMP-04）。
+
+    注册表里的值是 pickle 的 `haienv.client.model.HaienvConfig`，客户端与服务端必须能
+    import 到同一个类。这里只比较**基础版本**（去掉 git rev）并在不一致时提示；
+    设 `HAIENV_STRICT_VERSION=1` 时改为直接中止上传。
+    '''
+    local_version = _local_haienv_version()
+    if not server_version or not local_version:
+        return ''
+    if _base_version(server_version) == _base_version(local_version):
+        return ''
+    return (f'（注意：集群侧 haienv {server_version} 与本机 {local_version} 基础版本不同，'
+            f'若任务里出现环境读不到/反序列化报错，请对齐两侧 haienv 版本）')
+
+
 def _build_push_cmd(venv_name, local_path, remote_path, provider, force, no_checksum,
                     no_zip, no_diff, list_timeout, sync_timeout, cloud_connect_timeout,
                     token_expires, part_mb_size, proxy):
@@ -131,7 +167,16 @@ async def push_venv(venv_name, force=False, no_checksum=False, no_zip=False, no_
     # ---------------------------------------------------------------- ① API-11 预检
     pre_url = (f'{mars_url()}/ugc/update_cluster_venv?token={mars_token()}'
                f'&venv_name={venv_name}&py={item.py or ""}')
-    pre_result = await async_requests(RequestMethod.POST, pre_url, assert_success=[0, 1])
+    try:
+        pre_result = await async_requests(RequestMethod.POST, pre_url, assert_success=[0, 1])
+    except Exception as e:
+        # 二级回滚（移除两条路由注册）或服务端版本过旧时，这里会拿到 404：
+        # `async_requests` 对没有 success 字段的响应体抛异常，必须翻译成可读结论（RB-02）。
+        return {
+            'success': 0,
+            'msg': f'预检失败：{e}（若为「接口不存在 / Not Found」，说明集群服务端还没上线 env push —— '
+                   f'发布顺序必须是「先服务端，后客户端」）'
+        }
     if pre_result.get('success') != 1:
         return {
             'success': 0,
@@ -154,6 +199,15 @@ async def push_venv(venv_name, force=False, no_checksum=False, no_zip=False, no_
                    '请升级集群服务端到包含该字段的版本后再试'
         }
 
+    # CMP-04：服务端返回集群侧 haienv 版本，版本基础号不一致时提示（严格模式下直接中止）
+    server_version = str(pre_result.get('haienv_version') or '')
+    note = _version_note(server_version)
+    if note and os.environ.get('HAIENV_STRICT_VERSION') == '1':
+        return {
+            'success': 0,
+            'msg': f'集群侧与本机 haienv 版本不一致，已按 HAIENV_STRICT_VERSION=1 中止上传{note}'
+        }
+
     # ---------------------------------------------------------------- ② 上传
     push_cmd = _build_push_cmd(venv_name, item.path, upload_prefix, provider, force, no_checksum,
                                no_zip, no_diff, list_timeout, sync_timeout, cloud_connect_timeout,
@@ -173,17 +227,25 @@ async def push_venv(venv_name, force=False, no_checksum=False, no_zip=False, no_
         'extra_search_bin_dir': list(getattr(item, 'extra_search_bin_dir', []) or []),
         'extra_environment': list(getattr(item, 'extra_environment', []) or []),
     }
-    reg_result = await async_requests(
-        RequestMethod.POST, f'{mars_url()}/ugc/register_cluster_venv?token={mars_token()}',
-        assert_success=[0, 1], data=json.dumps(body))
+    try:
+        reg_result = await async_requests(
+            RequestMethod.POST, f'{mars_url()}/ugc/register_cluster_venv?token={mars_token()}',
+            assert_success=[0, 1], data=json.dumps(body))
+    except Exception as e:
+        # 上传已经成功，注册这一步的异常必须落回「已上传未注册」这一档（可重试），而不是抛栈
+        return {
+            'success': 0,
+            'msg': f'环境已上传但注册失败，可重试：env push {venv_name}'
+                   f'（原因：{e}；已上传的文件不会回滚）{note}'
+        }
     if reg_result.get('success') != 1:
         return {
             'success': 0,
             'msg': f'环境已上传但注册失败，可重试：env push {venv_name}'
-                   f'（原因：{reg_result.get("msg") or reg_result}；已上传的文件不会回滚）'
+                   f'（原因：{reg_result.get("msg") or reg_result}；已上传的文件不会回滚）{note}'
         }
 
     return {
         'success': 1,
-        'msg': f'上传并注册成功，可用 source haienv {venv_name}'
+        'msg': f'上传并注册成功，可用 source haienv {venv_name}{note}'
     }

@@ -18,6 +18,7 @@ import os
 import pickle
 import sqlite3
 import threading
+import time
 
 import pytest
 from munch import Munch
@@ -75,12 +76,15 @@ def env_conf(tmp_path):
         'cloud.storage.service.env_push_enabled_users',
         'cloud.storage.service.env_push_enabled_groups',
         'cloud.storage.service.env_name_regex',
+        'cloud.storage.service.env_register_isdir_wait_seconds',
     )}
     _set_conf('cloud.storage.service.env_path', str(root))
     _set_conf('cloud.storage.service.env_push_enabled', True)
     _set_conf('cloud.storage.service.env_push_enabled_users', [])
     _set_conf('cloud.storage.service.env_push_enabled_groups', [])
     _set_conf('cloud.storage.service.env_name_regex', ENV_NAME_RE.pattern)
+    # 单测里不需要等 NFS 属性缓存（生产默认 10s，见 env_registry._isdir_wait_seconds）
+    _set_conf('cloud.storage.service.env_register_isdir_wait_seconds', 0)
     yield root
     for key, value in backup.items():
         _set_conf(key, value if value is not None else '')
@@ -155,16 +159,29 @@ def test_tc_u04_derive_reuse_registry(user_a):
 
 
 def test_tc_u05_derive_allocates_suffix(user_a):
-    '''TC-U05：未注册时取第一个空闲后缀（与客户端 get_haienv_path 一致）。'''
+    '''TC-U05（N3 修订）：未注册且磁盘上没有同名目录 → 取 `_0`；已有同名目录 → 复用（幂等重试）。
+
+    语义变更（N3）：旧实现无条件取「第一个空闲后缀」，于是「上传成功但注册失败」后重试会
+    分配 `_1` 并把整份环境重传一遍。现在优先复用磁盘上已存在的同名目录（与客户端
+    `get_haienv_path` 的复用语义一致）。
+    '''
     user_dir = get_user_env_dir('U-A')
-    os.makedirs(os.path.join(user_dir, 'new1_0'), exist_ok=True)
     result = derive_env_path_sync(user_a, 'new1', '3.8')
     assert result['exists'] is False
-    assert result['path'] == os.path.join(user_dir, 'new1_1')
-    assert result['cloud_path'] == f'{GROUP}/shared/hfai_envs/U-A/new1_1', result
-    assert os.path.basename(result['cloud_path']) == os.path.basename(result['path'])
-    # 预检只读：不得创建任何目录
-    assert not os.path.exists(result['path'])
+    assert result['path'] == os.path.join(user_dir, 'new1_0')
+    assert result['reused'] is False
+
+    os.makedirs(os.path.join(user_dir, 'new1_0'), exist_ok=True)
+    retry = derive_env_path_sync(user_a, 'new1', '3.8')
+    assert retry['exists'] is False
+    assert retry['path'] == os.path.join(user_dir, 'new1_0')
+    assert retry['reused'] is True
+    assert retry['cloud_path'] == f'{GROUP}/shared/hfai_envs/U-A/new1_0', retry
+    assert os.path.basename(retry['cloud_path']) == os.path.basename(retry['path'])
+    # 预检只读：不得创建任何目录（new1_0 是测试自己建的，new2 应完全不存在）
+    assert not os.path.exists(os.path.join(user_dir, 'new2_0'))
+    assert derive_env_path_sync(user_a, 'new2', '3.8')['path'].endswith('new2_0')
+    assert not os.path.exists(os.path.join(user_dir, 'new2_0'))
 
 
 def test_tc_u06_derive_not_writable(env_conf, user_a):
@@ -538,14 +555,168 @@ def test_name_regex_defensive(user_a, monkeypatch):
     assert env_registry._name_regex() is ENV_NAME_RE
 
 
-def test_read_registry_corrupted(user_a):
-    '''注册表损坏时只告警、按「没有已注册环境」处理（不 500）。'''
+def test_read_registry_unreadable_fail_closed(user_a):
+    '''N3：注册表读不出来 ≠ 没注册过 —— 必须 fail-closed，不能静默当成空表。
+
+    历史行为：`_read_registry` 把所有异常吞成 `{}`，于是「读不出来」被当成「没注册过」，
+    预检分配新后缀 → 用户每重试一次就多传一份完整环境（103 上实测复现 `x_0 → x_1`）。
+    '''
     db_path = get_env_registry_path('U-A')
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     with open(db_path, 'wb') as f:
         f.write(b'this is not a sqlite database')
-    assert env_registry._read_registry(_FakeUser('U-A')) == {}
-    assert derive_env_path_sync(user_a, 'myenv', '3.8')['exists'] is False
+    with pytest.raises(WorkspaceError) as exc:
+        env_registry._read_registry(_FakeUser('U-A'))
+    assert exc.value.code == ErrorCode.ENV_REGISTRY_READ_FAILED
+    with pytest.raises(WorkspaceError) as exc2:
+        derive_env_path_sync(user_a, 'myenv', '3.8')
+    assert exc2.value.code == ErrorCode.ENV_REGISTRY_READ_FAILED
+
+
+def test_read_registry_partial_decode_fail_closed(user_a):
+    '''N3：单个条目损坏不能让整表变空；损坏的 key 必须显式暴露，且对该名字 fail-closed。'''
+    db_path = get_env_registry_path('U-A')
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    register_env_sync(user_a, 'good', _make_prefix(get_user_env_dir('U-A'), 'good_0'), '3.8')
+    # 直接塞一行反序列化不了的值（等价于「别的 haienv 版本写进去的 / 数据损坏」）
+    conn = sqlite3.connect(db_path)
+    conn.execute('REPLACE INTO "haienv" (key, value) VALUES (?,?)',
+                 ('broken', sqlite3.Binary(b'not-a-pickle')))
+    conn.commit()
+    conn.close()
+
+    registry, broken = env_registry._read_registry(_FakeUser('U-A'))
+    assert 'good' in registry, '一行坏掉不应让其余环境全部不可见'
+    assert broken == {'broken'}
+
+    with pytest.raises(WorkspaceError) as exc:
+        derive_env_path_sync(user_a, 'broken', '3.8')
+    assert exc.value.code == ErrorCode.ENV_REGISTRY_READ_FAILED
+
+    fresh = derive_env_path_sync(user_a, 'brandnew', '3.8')
+    assert fresh['exists'] is False
+
+
+def test_n3_derive_reuses_existing_dir_on_retry(user_a):
+    '''N3 幂等：注册表没有该名字、但磁盘上已有上一次 push 的目录 → 复用最小后缀。'''
+    user_dir = get_user_env_dir('U-A')
+    _make_prefix(user_dir, 'retry_0')
+    result = derive_env_path_sync(user_a, 'retry', '3.8')
+    assert result['path'] == os.path.join(user_dir, 'retry_0')
+    assert result['reused'] is True
+    # 目录在但没有注册 → exists 必须为 False（不能被当成「已可用、可跳过上传」）
+    assert result['exists'] is False
+
+    _make_prefix(user_dir, 'retry_2')
+    assert derive_env_path_sync(user_a, 'retry', '3.8')['path'].endswith('retry_0')
+
+    fresh = derive_env_path_sync(user_a, 'fresh', '3.8')
+    assert fresh['path'].endswith('fresh_0') and fresh['reused'] is False
+
+
+def test_n3_retry_after_register_failure_keeps_same_path(user_a, monkeypatch):
+    '''N3：上传成功 + 注册失败 → 重试必须复用同一目录，不再产生 `_1` 与第二份上传。'''
+    user_dir = get_user_env_dir('U-A')
+    first = derive_env_path_sync(user_a, 'rt', '3.8')
+    _make_prefix(user_dir, os.path.basename(first['path']))  # 模拟数据面已落盘
+
+    calls = {'n': 0}
+    real_write = env_registry._write_registry_sync
+
+    def _flaky(*args, **kwargs):
+        calls['n'] += 1
+        if calls['n'] == 1:
+            raise RuntimeError('boom（模拟注册表瞬时写失败）')
+        return real_write(*args, **kwargs)
+
+    monkeypatch.setattr(env_registry, '_write_registry_sync', _flaky)
+    with pytest.raises(WorkspaceError) as exc:
+        register_env_sync(user_a, 'rt', first['path'], '3.8')
+    assert exc.value.code == ErrorCode.ENV_REGISTRY_WRITE_FAILED
+
+    second = derive_env_path_sync(user_a, 'rt', '3.8')      # = 客户端重试 `env push`
+    assert second['path'] == first['path']
+    assert second['reused'] is True
+    register_env_sync(user_a, 'rt', second['path'], '3.8')
+    registry, broken = env_registry._read_registry(_FakeUser('U-A'))
+    assert 'rt' in registry and not broken
+    assert [d for d in os.listdir(user_dir) if d.startswith('rt_')] == ['rt_0']
+
+
+def test_register_waits_for_dir_visibility(user_a):
+    '''NFS 属性缓存：目录稍后才对 Pod 可见时，不应直接判「你没上传」（产品侧轮询）。'''
+    _set_conf('cloud.storage.service.env_register_isdir_wait_seconds', 5)
+    user_dir = get_user_env_dir('U-A')
+    target = os.path.join(user_dir, 'lag_0')
+
+    def _create_later():
+        time.sleep(0.6)
+        _make_prefix(user_dir, 'lag_0')
+
+    thread = threading.Thread(target=_create_later)
+    thread.start()
+    try:
+        register_env_sync(user_a, 'lag', target, '3.8')
+    finally:
+        thread.join()
+    registry, _ = env_registry._read_registry(_FakeUser('U-A'))
+    assert 'lag' in registry
+
+
+def test_register_dir_timeout_still_rejects(user_a):
+    '''等不到目录仍然报错（不放松校验），并提示可重试（重试会复用同一路径）。'''
+    _set_conf('cloud.storage.service.env_register_isdir_wait_seconds', 0.2)
+    with pytest.raises(WorkspaceError) as exc:
+        register_env_sync(user_a, 'nodir', os.path.join(get_user_env_dir('U-A'), 'nodir_0'), '3.8')
+    assert exc.value.code == ErrorCode.INVALID_PARAM
+    assert '重试' in exc.value.msg
+
+
+def test_n4_env_data_plane_gated_by_env_switch(user_a, env_conf, monkeypatch):
+    '''N4：env_push_enabled=false 必须同时挡住数据面 /ugc/sync_to_cluster(file_type=env)。
+
+    否则一级回滚只关掉了控制面（API-11/API-13），数据面仍能把整份环境写进集群共享盘。
+    '''
+    from cloud_storage.service import sync_to_cluster as stc
+    from conf.utils import FileType
+
+    monkeypatch.setattr(stc, 'ensure_cloud_storage_configured', lambda: None)
+    monkeypatch.setattr(stc, 'check_feature_enabled', lambda user: None)
+    # 让「过了开关之后」的流程立刻短路，避免依赖 Redis / 对象存储
+    monkeypatch.setattr(stc, 'get_base_path',
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            WorkspaceError(ErrorCode.INVALID_PARAM, 'stop-after-gate')))
+    real_gate = stc.check_env_push_enabled
+    gated = []
+
+    def _spy(user):
+        gated.append(getattr(user, 'user_name', user))
+        return real_gate(user)
+
+    monkeypatch.setattr(stc, 'check_env_push_enabled', _spy)
+
+    # 开关关闭：env 被拦（并且确实调用了 env 开关）
+    _set_conf('cloud.storage.service.env_push_enabled', False)
+    gated.clear()
+    with pytest.raises(WorkspaceError) as exc:
+        _run(stc.submit_to_cluster(user_a, 'myenv', FileType.ENV, []))
+    assert exc.value.code == ErrorCode.FEATURE_DISABLED
+    assert gated == ['U-A']
+
+    # workspace 不受 env 开关影响（继续走到后面，被我们注入的 stop 打断）
+    gated.clear()
+    with pytest.raises(WorkspaceError) as exc2:
+        _run(stc.submit_to_cluster(user_a, 'myws', FileType.WORKSPACE, []))
+    assert exc2.value.msg == 'stop-after-gate'
+    assert gated == [], 'workspace 不该受 env 开关约束'
+
+    # 开关打开：env 也放行
+    _set_conf('cloud.storage.service.env_push_enabled', True)
+    gated.clear()
+    with pytest.raises(WorkspaceError) as exc3:
+        _run(stc.submit_to_cluster(user_a, 'myenv', FileType.ENV, []))
+    assert exc3.value.msg == 'stop-after-gate'
+    assert gated == ['U-A']
 
 
 def test_list_used_suffixes_defensive(user_a, monkeypatch):

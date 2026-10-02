@@ -25,7 +25,7 @@ from conf.utils import FileType, FilePrivacy, DatasetType, SyncDirection, SyncSt
 
 from .context import (get_worker_pools, get_instance_id, get_pod_id,
                       ensure_cloud_storage_configured, check_feature_enabled,
-                      get_max_files_per_request)
+                      check_env_push_enabled, get_max_files_per_request)
 from .errors import WorkspaceError, ErrorCode
 from .status import set_owner, finalize_status
 from .transfer import resumable_download_with_retry, download_callback
@@ -41,6 +41,14 @@ async def submit_to_cluster(user, name: str, file_type: FileType, files,
                             no_zip: bool = False, force: bool = False) -> dict:
     ensure_cloud_storage_configured()
     check_feature_enabled(user)
+
+    if file_type == FileType.ENV:
+        # N4：env 家族的 push 是**数据面**，必须与 API-11/API-13（控制面）共用同一个开关。
+        # 否则 `env_push_enabled=false` 只挡住了预检与注册，客户端（或任何带合法 token 的调用方）
+        # 仍可把整份环境写进集群共享盘 —— 一级回滚就不成立（见 Checklist RB-01）。
+        # 注：崩溃恢复路径（cloud_storage/api.py 的 _sync_to_cluster_impl(force=True)）是
+        # 「已受理任务」的续传，不在这里拦截，避免把在途任务卡死在中间态。
+        check_env_push_enabled(user)
 
     if not name or '/' in name:
         raise WorkspaceError(ErrorCode.INVALID_PARAM, f'工作区名非法: {name}')

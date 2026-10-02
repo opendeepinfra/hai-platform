@@ -221,6 +221,102 @@ def test_tc_c09_success_message(venv_api, tmp_path, monkeypatch):
     assert body['extra_search_dir'] == ['/opt/x']
 
 
+def test_cmp04_version_skew_note_and_strict(venv_api, tmp_path, monkeypatch):
+    '''CMP-04 / ADR-E4：服务端 haienv 基础版本不一致时提示；HAIENV_STRICT_VERSION=1 时中止上传。'''
+    _use_env_dir(tmp_path)
+    prefix = tmp_path / 'ver_0'
+    prefix.mkdir()
+    Haienv.insert(haienv_name='ver', haienv_config=HaienvConfig(
+        path=str(prefix), extend='False', extend_env='', py='3.8'),
+        outside_db_path=str(tmp_path / 'venv.db'))
+
+    async def _fake_requests(method, url, **kwargs):
+        if 'update_cluster_venv' in url:
+            return {'success': 1, 'path': '/cluster/ver_0', 'exists': False,
+                    'cloud_path': 'hfai/shared/hfai_envs/U-A/ver_0',
+                    'haienv_version': '9.9.9+serverrev'}
+        return {'success': 1, 'registered': True}
+
+    executed = []
+    monkeypatch.setattr(venv_api, 'async_requests', _fake_requests)
+    monkeypatch.setattr(venv_api.os, 'system', lambda cmd: executed.append(cmd) or 0)
+    monkeypatch.setattr(venv_api, '_local_haienv_version', lambda: '1.4.1+localrev')
+    monkeypatch.delenv('HAIENV_STRICT_VERSION', raising=False)
+
+    result = asyncio.get_event_loop().run_until_complete(venv_api.push_venv('ver'))
+    assert result['success'] == 1, result['msg']          # 默认只提示、不阻断
+    assert '集群侧 haienv' in result['msg'] and '9.9.9+serverrev' in result['msg']
+    assert len(executed) == 1, '默认不应中止上传'
+
+    # 带 git rev 的完整版本不同、基础版本相同 → 不提示（避免每次 push 都刷无用告警）
+    monkeypatch.setattr(venv_api, '_local_haienv_version', lambda: '9.9.9+anotherrev')
+    executed.clear()
+    result = asyncio.get_event_loop().run_until_complete(venv_api.push_venv('ver'))
+    assert result['success'] == 1 and '集群侧 haienv' not in result['msg']
+
+    # 严格模式：基础版本不一致 → 中止，且不上传
+    monkeypatch.setattr(venv_api, '_local_haienv_version', lambda: '1.4.1+localrev')
+    monkeypatch.setenv('HAIENV_STRICT_VERSION', '1')
+    executed.clear()
+    result = asyncio.get_event_loop().run_until_complete(venv_api.push_venv('ver'))
+    assert result['success'] == 0
+    assert 'HAIENV_STRICT_VERSION' in result['msg']
+    assert executed == [], '严格模式下不得上传'
+
+
+def test_cmp04_base_version_helper(venv_api):
+    '''基础版本比较：去掉 git rev / 本地后缀。'''
+    assert venv_api._base_version('1.4.1+e3c42c') == '1.4.1'
+    assert venv_api._base_version('1.4.1') == '1.4.1'
+    assert venv_api._base_version('') == ''
+
+
+def test_rb02_missing_route_reports_clear_error(venv_api, tmp_path, monkeypatch):
+    '''RB-02 / 版本偏斜：服务端没有这两个路由（404 → `async_requests` 抛异常）时必须给可读结论。'''
+    _use_env_dir(tmp_path)
+    prefix = tmp_path / 'noroute_0'
+    prefix.mkdir()
+    Haienv.insert(haienv_name='noroute', haienv_config=HaienvConfig(
+        path=str(prefix), extend='False', extend_env='', py='3.8'),
+        outside_db_path=str(tmp_path / 'venv.db'))
+
+    async def _boom(*args, **kwargs):
+        raise Exception("请求失败: [exception: {'detail': 'Not Found'}]")
+
+    executed = []
+    monkeypatch.setattr(venv_api, 'async_requests', _boom)
+    monkeypatch.setattr(venv_api.os, 'system', lambda cmd: executed.append(cmd) or 0)
+    result = asyncio.get_event_loop().run_until_complete(venv_api.push_venv('noroute'))
+    assert result['success'] == 0
+    assert 'Not Found' in result['msg'] or '接口不存在' in result['msg']
+    assert '先服务端' in result['msg'], result['msg']
+    assert executed == [], '预检失败不得上传'
+
+
+def test_register_exception_is_graded_not_raised(venv_api, tmp_path, monkeypatch):
+    '''注册阶段抛异常（网络/路由问题）→ 归入「已上传但注册失败，可重试」，不得抛栈。'''
+    _use_env_dir(tmp_path)
+    prefix = tmp_path / 'regerr_0'
+    prefix.mkdir()
+    Haienv.insert(haienv_name='regerr', haienv_config=HaienvConfig(
+        path=str(prefix), extend='False', extend_env='', py='3.8'),
+        outside_db_path=str(tmp_path / 'venv.db'))
+
+    async def _fake_requests(method, url, **kwargs):
+        if 'update_cluster_venv' in url:
+            return {'success': 1, 'path': '/cluster/regerr_0', 'exists': False,
+                    'cloud_path': 'hfai/shared/hfai_envs/U-A/regerr_0'}
+        raise Exception('请求失败: [exception: boom]')
+
+    executed = []
+    monkeypatch.setattr(venv_api, 'async_requests', _fake_requests)
+    monkeypatch.setattr(venv_api.os, 'system', lambda cmd: executed.append(cmd) or 0)
+    result = asyncio.get_event_loop().run_until_complete(venv_api.push_venv('regerr'))
+    assert result['success'] == 0
+    assert '已上传但注册失败' in result['msg'] and '重试' in result['msg'], result['msg']
+    assert len(executed) == 1, '上传已执行，不应回滚'
+
+
 def test_tc_c10_missing_cloud_path(venv_api, tmp_path, monkeypatch):
     """C-6 回归：服务端只返回集群 path、没有 cloud_path 时必须明确失败，且不执行上传。
 

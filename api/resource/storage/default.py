@@ -12,6 +12,8 @@ hai-cli env（haienv）服务端接入层 —— 设计 docs/haiplatform/env/env
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import time
+
 from fastapi import Depends, Request
 
 from logm import logger
@@ -51,29 +53,34 @@ async def update_cluster_venv(request: Request, user=Depends(get_ugc_user)):
     '''
     预检 + 路径推导（FR-03 / FR-07 / FR-08 / SEC-03）。
 
-    出参：{'success': 1, 'path': '<集群 env 目录绝对路径>', 'exists': <bool>}
+    出参：{'success': 1, 'path': '<集群 env 目录绝对路径>', 'exists': <bool>,
+           'reused': <bool>, 'cloud_path': <对象存储 key 前缀>,
+           'haienv_version': <集群侧 haienv 版本>}
     '''
     await _require_config()
     params = request.query_params
     venv_name = params.get('venv_name') or ''
     py = params.get('py') or ''
     extend = params.get('extend')
+    started = time.time()
     try:
         result = await derive_env_path(user, venv_name, py, extend)
     except WorkspaceError as e:
         env_push_requests_total.labels(api='update_cluster_venv', result='fail', code=e.code).inc()
         logger.warning(f'[ENV] update_cluster_venv 失败 user={user.user_name} env={venv_name} '
-                       f'code={e.code} msg={e.msg}')
+                       f'code={e.code} elapsed_ms={int((time.time() - started) * 1000)} msg={e.msg}')
         raise
     except Exception as e:
         env_push_requests_total.labels(api='update_cluster_venv', result='fail',
                                        code='INTERNAL_ERROR').inc()
-        logger.error(f'[ENV] update_cluster_venv 异常 user={user.user_name} env={venv_name}: {e}')
+        logger.error(f'[ENV] update_cluster_venv 异常 user={user.user_name} env={venv_name} '
+                     f'elapsed_ms={int((time.time() - started) * 1000)}: {e}')
         raise WorkspaceError('INTERNAL_ERROR', f'预检失败: {e}')
     env_push_requests_total.labels(api='update_cluster_venv', result='ok', code='OK').inc()
     result['success'] = 1
-    logger.debug(f'[ENV] update_cluster_venv user={user.user_name} env={venv_name} '
-                 f'path={result.get("path")} exists={result.get("exists")}')
+    logger.info(f'[ENV] update_cluster_venv user={user.user_name} env={venv_name} '
+                f'path={result.get("path")} exists={result.get("exists")} '
+                f'reused={result.get("reused")} elapsed_ms={int((time.time() - started) * 1000)}')
     return result
 
 
@@ -83,32 +90,34 @@ async def register_cluster_venv(request: Request, user=Depends(get_ugc_user)):
     '''
     把已上传成功的 env 写入集群侧注册表（FR-04 / FR-09 / SEC-02）。
 
-    出参：{'success': 1, 'registered': true, 'path': ..., 'db': ...}
+    出参：{'success': 1, 'registered': true, 'path': ..., 'db': ..., 'haienv_version': ...}
     '''
-    import time as _time
-
     await _require_config()
     body = await parse_json_body(request)
     venv_name = body.get('venv_name')
     path = body.get('path')
     py = body.get('py')
     try:
-        started = _time.time()
+        started = time.time()
         result = await register_env(user, venv_name, path, py,
                                     _as_str_list(body.get('extra_search_dir')),
                                     _as_str_list(body.get('extra_search_bin_dir')),
                                     _as_str_list(body.get('extra_environment')))
-        env_register_duration_seconds.labels(result='ok').observe(_time.time() - started)
+        env_register_duration_seconds.labels(result='ok').observe(time.time() - started)
     except WorkspaceError as e:
+        # OBS：失败也必须进入耗时直方图，否则「注册变慢」在失败路径上完全不可见
+        env_register_duration_seconds.labels(result='fail').observe(time.time() - started)
         env_push_requests_total.labels(api='register_cluster_venv', result='fail', code=e.code).inc()
         logger.warning(f'[ENV] register_cluster_venv 失败 user={user.user_name} env={venv_name} '
-                       f'path={path} code={e.code} msg={e.msg}')
+                       f'path={path} code={e.code} elapsed_ms={int((time.time() - started) * 1000)} '
+                       f'msg={e.msg}')
         raise
     except Exception as e:
+        env_register_duration_seconds.labels(result='fail').observe(time.time() - started)
         env_push_requests_total.labels(api='register_cluster_venv', result='fail',
                                        code='INTERNAL_ERROR').inc()
         logger.error(f'[ENV] register_cluster_venv 异常 user={user.user_name} env={venv_name} '
-                     f'path={path}: {e}')
+                     f'path={path} elapsed_ms={int((time.time() - started) * 1000)}: {e}')
         raise WorkspaceError('ENV_REGISTRY_WRITE_FAILED',
                              f'写入集群侧注册表失败: {path}，上传的文件已保留，可直接重试 `env push` 补登记')
     env_push_requests_total.labels(api='register_cluster_venv', result='ok', code='OK').inc()

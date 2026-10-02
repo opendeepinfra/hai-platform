@@ -131,13 +131,16 @@ bash ~/hai-platform/docs/haiplatform/scripts/e2e_env.sh
 
 ## 5. 分层测试结果
 
-### 5.1 L1 单元(41 条)
+### 5.1 L1 单元(47 条)
 
 ```
 tests/env/test_env_registry.py::test_tc_u01_path_functions PASSED
-... (U 组 16 条 + 灰度/extend 4 条 + P 组 3 条 + REG 组 3 条 + S 组 2 条 + 边界/防御 12 条)
-40 passed, 1 skipped  (skip: 以 root 运行无法用 chmod 555 造不可写目录,已用「monkeypatch tempfile.mkstemp 抛异常」等价覆盖)
-env_registry.py: 可执行行=225 已覆盖=225 未覆盖=0 行覆盖率=100.0%
+... (U 组 16 条 + 灰度/extend 4 条 + P 组 3 条 + REG 组 3 条 + S 组 2 条 + 边界/防御 12 条
+     + M3 新增 7 条：读失败 fail-closed / 单行损坏 / N3 复用与重试 / NFS 可见性等待与超时 / N4 数据面开关)
+46 passed, 1 skipped  (skip: 以 root 运行无法用 chmod 555 造不可写目录,已用「monkeypatch tempfile.mkstemp 抛异常」等价覆盖)
+env_registry.py: 283 stmts / 19 miss = 行覆盖率 93%（M3 改动后重测；UT-01 门槛 85%）
+未覆盖行集中在防御分支：_haienv_version 的 importlib 兜底、_read_registry_rowwise 的「打不开/表读不出来」、
+_wait_for_dir 超时、_list_used_suffixes 的 listdir 异常
 ```
 
 要点用例与结论:
@@ -156,6 +159,10 @@ env_registry.py: 可执行行=225 已覆盖=225 未覆盖=0 行覆盖率=100.0%
 | TC-U14/P04 | 自检一致 `ok=true`;人为制造不一致 `ok=false` + 建议值且不抛异常 | PASS |
 | TC-P01/P02/P03/P05 | `get_base_path(cluster)` 的 dirname == `dirname(HAIENV_PATH)` == `user_env_dir`;S3 key 不变;`env_path=/hf_shared` 亦成立;`check_is_subpath` 拒绝穿越 | PASS |
 | TC-A04/A10/A19/O04/O06 | extend 拒绝;灰度关闭/白名单外 `FEATURE_DISABLED` 且不写库;正则可收紧、含 `/` 的配置被忽略 | PASS |
+| TC-U05(修订)/**N3** | 未注册且磁盘无同名目录 → `_0`;磁盘已有 `name_0` → **复用** (`reused=true`) 而不是分配 `name_1`;上传成功+注册失败后重试 → 同一路径、目录只有一个 | PASS |
+| **N3b** | 注册表整体读不出来 → `ENV_REGISTRY_READ_FAILED`(不再静默当空表);单行坏掉时其余条目仍可见、坏 key 单独 fail-closed | PASS |
+| **NFS 可见性** | 目录稍后才可见 → 有上限轮询后成功注册;超时仍报 `INVALID_PARAM` 且提示可重试 | PASS |
+| **N4** | `env_push_enabled=false` 时 `submit_to_cluster(file_type=env)` 被拒;`file_type=workspace` 不受 env 开关影响;开关打开后放行 | PASS |
 
 ### 5.2 L2 接口冒烟(20 项)
 
@@ -167,12 +174,12 @@ env_registry.py: 可执行行=225 已覆盖=225 未覆盖=0 行覆盖率=100.0%
 API-13 `text/plain` 与 `application/json` 注册/幂等记录数不增长/`exists=true` 复用路径/`/tmp/evil` 等 3 类越界/他人目录/非法名/缺 py、
 注册表客户端反序列化、`hai-cli env list` 可见、`source haienv` + 探针包 import、伪造 `username/group` 被忽略。
 
-### 5.3 客户端单测(37 项 = push 10 + create 前置提示 27)
+### 5.3 客户端单测(39 项 = push 12 + create 前置提示 27)
 
 ```
-tests/env/test_client_push.py ..........          [10 passed]   # E3/E7/E13 + 分级 + 注册 body + C-6 回归
+tests/env/test_client_push.py ............        [12 passed]   # E3/E7/E13 + 分级 + 注册 body + C-6 回归 + CMP-04 版本提示/strict
 tests/env/test_haienv_create_prereq.py ...........................  [27 passed]   # C-8：CUDA 提示(含 11.5)/strict/python/extend
-37 passed
+39 passed
 ```
 
 E3(`--file_type env` 而非 `FileType.ENV`)、E13(插件二进制 `haiworkspace push` / 主 CLI `hai-cli workspace push` 两条分支都有断言,且不含 `haienv workspace push`)、
@@ -196,6 +203,40 @@ C08(「已上传但注册失败,可重试」)、C09(注册 body 为 JSON 且 `ex
 ```
 bash smoke_ugc.sh http://10.205.52.200        →  SMOKE 结果: PASS=8 FAIL=0
 bash e2e_workspace.sh all                     →  E2E 结果统计: PASS=19 FAIL=0
+```
+
+### 5.6 M3 新增脚本（可重复执行）
+
+| 脚本 | 作用 | 103 实测结果 |
+| --- | --- | --- |
+| `check_env_idempotent.sh` | N3 幂等在线自检：首次预检 `_0` → 模拟「已上传未注册」→ 重试必须复用同一路径 → 补登记 → `exists=true` → 重复注册记录数不增长 | `PASS=5 FAIL=0`（17:24:44–17:24:46） |
+| `env_rollback_drill.sh` | 一级回滚演练（RB-01/03/04）：关开关 → 三条写入路径全被拒 → `venv.db` 未被改动 → 已注册环境仍可读 → 恢复 → API-11 重新可用 → `override.toml` md5 复原；`DRILL_L2=1` 追加**二级回滚**（RB-02）：注释两条路由注册 → 404 → 恢复 | `PASS=8 FAIL=0`（一级）；`DRILL_L2=1` 时 `PASS=13 FAIL=0`；关停耗时 **4–5s**、恢复 **5s**（改配置/改路由 + `supervisorctl restart ugc_server`） |
+| `env_metrics.sh` | 最小看板：请求量 / 成功率 / 注册耗时 P50·P95·P99 / 失败 reason 分布 + 5% 阈值判定 | 抓到 4 个 env 指标族；冒烟后样本如上表（含故意注入的失败码） |
+| `env_alerts.yml` | OBS-03 告警规则（配置即代码）：注册/预检失败率 > 5%、写失败、读失败、P99 > 500ms | 103 无 Prometheus/Grafana，未 apply；规则与 `env_metrics.sh` 同指标名 |
+
+示例（关闭态演练日志节选）：
+
+```
+PASS | RB-01 API-11 被拒（FEATURE_DISABLED）
+PASS | RB-01 API-13 被拒（FEATURE_DISABLED）
+PASS | N4 数据面 sync_to_cluster(file_type=env) 被拒（FEATURE_DISABLED）
+PASS | RB-03 关闭态期间 venv.db 未被改动（md5 与 key 列表一致）
+PASS | RB-03 已注册环境在关闭态仍可读（haienv 能反序列化）
+PASS | 恢复后 API-11 重新可用（并复用已注册路径）
+```
+
+二级回滚（`DRILL_L2=1`）演练日志节选：
+
+```
+     二级回滚改动结果：OK
+     /ugc/update_cluster_venv → HTTP 404
+PASS | RB-02 update_cluster_venv 已下线（HTTP 404）
+     /ugc/register_cluster_venv → HTTP 404
+PASS | RB-02 register_cluster_venv 已下线（HTTP 404）
+PASS | RB-02 workspace 路由不受影响（/ugc/get_sync_status HTTP 200）
+     客户端输出：预检失败：Not Found（若为接口不存在，请升级集群服务端到包含 env push 的版本）
+PASS | RB-02 客户端在路由下线时给出明确错误
+PASS | RB-02 恢复路由后 API-11 重新可用
 ```
 
 ---
@@ -337,18 +378,58 @@ AssertionError: 检测到的 nvcc 均不在平台基线 11.x 内：[nvcc: 11.5�
 | AC-07 安全 | ✅ | L1 S 组 + `smoke_env.sh` 第 5/11/12/13/17 项(越界、非法名、伪造身份) |
 | AC-08 拒绝 extend | ✅ | L1 `TC-A04`、客户端 `TC-C05`、`smoke_env.sh` 第 4 项 |
 | AC-09 兼容 | ✅ | `smoke_env.sh` 第 2/9/10 项(旧形态无 `extend`);`smoke_ugc.sh` 8/8(枚举串兼容未受影响) |
-| AC-10 灰度 | ✅ | L1 `TC-A10`/`TC-O04`(接口级灰度需重启生效,与 workspace 一致,未在本轮做动态改配置演练) |
-| AC-11 回滚 | ⏳ 未演练(需移除两行路由注册后重启,属发布演练项) | 设计 §9.3 已给出两级回滚方案;本特性**零 DDL**,回滚无脏数据 |
+| AC-10 灰度 | ✅ | L1 `TC-A10`/`TC-O04`(接口级灰度);**M3 起有配置驱动的在线演练**：`env_rollback_drill.sh` 改 `override.toml` + 重启 ugc_server（4s）后三条写入路径全部 `FEATURE_DISABLED`（详见 §5.6） |
+| AC-11 回滚 | ✅ | `env_rollback_drill.sh` 8/8（§5.6）：一级回滚 4s 生效、二级回滚方案见设计 §9.3、`venv.db` md5/key 不变、已注册环境仍可读、恢复后可用；本特性**零 DDL**，回滚无脏数据 |
 | AC-12 文档 | ✅ | 本文件 + `environment.md.txt` 新增 `env push` 用法与失败处置 + `ugc.rst.txt` 经 `.. click:: haienv.client.cli:cli` **自动**收录 `push` |
 
 ### 8.1 未覆盖/后续项
 
 | 项 | 说明 |
 | --- | --- |
-| 性能(NFR-01/02, PERF-01/02) | 未做 200/100 QPS 压测;单次接口实测都在毫秒级(日志 `elapsed_ms`) |
-| 故障注入矩阵 FI-04 / FI-06 | `haienv` 包版本偏移、服务端重启期间的半写状态未注入验证 |
-| 动态灰度(OPS-02 演练) | 需改 `override.toml` 后重启 pod;本轮只验了「关闭即拒绝」的领域层行为 |
+| 性能(NFR-01/02, PERF-01/02) | 未做 200/100 QPS 压测;单次接口实测都在毫秒级(日志 `elapsed_ms`);`env_register_duration_seconds` 用默认桶(粒度较粗),要精确判 P99 建议显式配置 buckets |
+| 故障注入矩阵 FI-04 / FI-06 | `haienv` 包版本偏移、服务端重启期间的半写状态未注入验证（M3 已覆盖「读不出来 → fail-closed」的等价路径，见 §5.1 N3b 与 §9） |
+| 动态灰度(OPS-02 演练) | **M3 已补**：`env_rollback_drill.sh` 在线改配置 + 重启 ugc_server（4s）并断言三条写入路径全被拒 |
 | `platform` 基础环境(CMP-05/TASK-07) | 本环境镜像内 `/hf_shared/hfai_envs/platform` 是**空占位目录**(无 `venv.db`),故 103 上不存在可回归的基础环境 |
 | `localfs` provider | 103 只有 RustFS(`s3`);`localfs` 路径按设计需单独实现(现状 `build_cloud_api` 直接拒绝) |
 | 本机 `create` 仍需 conda | 103 上 fireflyer 没有 conda（只有 root 的 `/root/miniconda3`，无权访问）；真实 `create`/`source haienv` 都要 conda（activate 里的 `__IS_HF_ENV__` 从未被替换 → 必走 `conda activate`）。可选方案：为 fireflyer 装 Miniconda（方案 F，约 600MB，宿主 `/` 仅剩 11G 需先清理）或在平台镜像容器里 create（方案 G） |
-| NFS 可见性（环境特性，非产品缺陷） | `smoke_env.sh` 的 fixture 在**宿主机**（NFS 服务端本地路径）建目录、由 **pod**（NFS 客户端）执行 `os.path.isdir`。NFSv4 `lookupcache=all` 的目录属性/负项缓存（≤ `acdirmax`≈60s）会让新建目录在 pod 内短暂「看不到」，表现为 `register_cluster_venv` 返回「目标目录不存在」。脚本已加「等待 pod 侧可见」；真实 push 链路里目录由**服务端自己**在 stage2 创建，不受影响 |
+| NFS 可见性（环境特性 + 产品侧兜底） | 宿主与 Pod 是不同 NFS 客户端，`lookupcache=all` 的目录属性/负项缓存（≤ `acdirmax`≈60s）会让新建目录在 Pod 内短暂「看不到」（103 实测 **约 28s**）。**M3 起产品侧也有兜底**：API-13 默认轮询等待 10s（`env_register_isdir_wait_seconds` 可调，上限 120s），超时仍报错并提示「直接重试 `env push`」；`smoke_env.sh` 保留自己的等待逻辑 |
+
+---
+
+## 9. M3 精简收口（内部用户口径，2026-10-02）
+
+范围决策：本特性**目前只服务内部用户**，因此 M3 走「精简」路线 ——
+**前置修复 + 回滚 + 最小看板 + 幂等/兼容验证**全部落地；正式发布镜像、三档灰度观察期、
+POST/ACC 签署留给真上线时再做（`env-server-checklist.md` 阶段 11/14/16 仍为未勾选）。
+
+### 9.1 本轮改动
+
+| 编号 | 问题（修复前） | 改动 | 文件 |
+| --- | --- | --- | --- |
+| **N4** | `env_push_enabled=false` 只挡住 API-11/API-13（控制面），**数据面 `/ugc/sync_to_cluster` 仍可把整份环境写进集群** → 一级回滚不成立 | `submit_to_cluster` 在 `file_type == ENV` 时同样调用 `check_env_push_enabled`；崩溃恢复路径（已受理任务续传）不拦 | `cloud_storage/service/sync_to_cluster.py` |
+| **N3** | 注册表读不出来 → 吞成 `{}` → 当成「没注册过」→ 分配新后缀 → **重试即重复上传整份环境**（实测 `probe_retry_z9_0 → _1`） | ① 整表读失败 → `ENV_REGISTRY_READ_FAILED`（fail-closed）；② 单行反序列化失败 → 降级逐行读、坏 key 单独失败、其余条目不受影响；③ 注册表未命中但磁盘已有同名目录 → **复用最小后缀**；④ 新增 `env_registry_read_failures_total` | `cloud_storage/service/env_registry.py`、`errors.py`、`metrics.py` |
+| **N5** | `register_cluster_venv` 的 `isdir` 判定对 NFS 属性缓存敏感（宿主建目录、Pod 看不到就报「你没上传」） | 有上限轮询（默认 10s，`env_register_isdir_wait_seconds` 可调/上限 120s），超时仍报错并提示「重试会复用同一目录」 | 同上 |
+| **N6** | 设计 §9.4 的指标标签（`update`/`register`）与实现（`update_cluster_venv`/`register_cluster_venv`）不一致 | 以**实现为准**修订设计文档（标签更明确，且 103 实测即如此） | `env-server-design.md` §9.4 |
+| **N7** | 注册**失败**不进耗时直方图 → 失败路径的耗时/积压完全不可见 | 失败也 `observe(result='fail')`；API-11 成功日志补 `path/exists/reused/elapsed_ms` | `api/resource/storage/default.py` |
+| **兼容** | ADR-E4 只承诺「类签名探测」，零实现 | 服务端返回并在启动自检打印 `haienv_version`；客户端基础版本不一致时提示、`HAIENV_STRICT_VERSION=1` 时中止上传 | `env_registry.py`、`api/resource/storage/default.py`、`client/api/venv_api.py` |
+
+### 9.2 未决/后续项（N 台账）
+
+| 编号 | 事项 | 状态 |
+| --- | --- | --- |
+| N1 | 权限口径：客户端把用户 env 目录 `chmod 777`（`client/api/venv_api.py`、`plugins/haienv/haienv/client/api.py`），而 `venv.db` 在共享盘上所有用户可写 → 跨用户篡改面 | **待安全/产品裁决**（103 内部环境暂以「同组用户互信」为前提；若上生产应改为 770 + 平台组属主） |
+| N2 | 注册表值是 `pickle` 的 `HaienvConfig`，读取端会 `loads` 用户可写 DB 中的内容（与 N1 同源） | **随 N1 一起裁决**；M3 已做到「读不出来不写坏、坏 key 显式暴露」 |
+| N3 | 幂等退化（重复上传） | ✅ 本轮修复（`check_env_idempotent.sh` 5/5） |
+| N4 | 数据面未受 env 开关约束 | ✅ 本轮修复（`env_rollback_drill.sh` 第 4 条断言） |
+| N5 | `isdir` 对 NFS 缓存敏感 | ◐ 产品侧缓减（10s 轮询 + 重试提示）；根因不在应用层 |
+| N6 | 指标标签与设计文档不一致 | ✅ 本轮修订文档 |
+| N7 | 失败未进耗时直方图 | ✅ 本轮修复 |
+| N8 | `env_register_duration_seconds` 用默认桶，P99 只能粗判（PERF-02 门槛 300ms） | ⏳ 后续：显式配置 buckets（`.005/.02/.05/.1/.3/.5/1/3`） |
+| N9 | 灰度期「老客户端 + 新服务端」的 C-6 组合会静默写错对象 key | ◐ 控制手段：客户端 `cloud_path` 缺失即 fail-closed（不用集群路径兜底）+ 发布顺序「先服务端后客户端」（REL-01）；**混用期的这个组合无法从服务端修复**，上生产前需按发布顺序执行 |
+
+### 9.3 验收口径（精简 M3 的「可上线」定义）
+
+1. **关得掉**：`env_push_enabled=false` 后控制面 + 数据面全部拒绝，4s 生效，`venv.db` 无脏数据，恢复 5s（§5.6）；
+2. **看得见**：4 个指标族在 `/metrics` 可抓，成功/失败都进耗时直方图，最小看板 + 告警规则可执行（`env_metrics.sh` / `env_alerts.yml`）；
+3. **重试安全**：同名重试复用同一目录与对象 key，注册表记录数不增长（§5.6）；
+4. **兼容安全**：注册表读失败不写坏、版本偏移可见且可控（`HAIENV_STRICT_VERSION`）、老客户端零回归（`smoke_ugc` 8/8、`e2e_workspace` 19/19）。

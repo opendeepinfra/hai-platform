@@ -97,9 +97,13 @@ sudo kubectl -n hai-platform exec hai-platform-0 -- \
 | [build_cli_local.sh](build_cli_local.sh) | 在**目标机**上直接构建并安装 `hai-cli` / `haienv` / `haiworkspace` wheel（免 docker） | `REPO=<源码> HAI_VERSION=<tag> bash build_cli_local.sh` | 含 wheel 自检（`hfai/conf/utils.py` 等必须在内）；版本号取自 `HAI_VERSION` 或源目录 git HEAD |
 | [package_cli_for_host.sh](package_cli_for_host.sh) | **推荐的打包安装入口**：在仓库根按当前提交 `git archive` 干净源码 → 传到目标机 → 构建安装 → 归档 wheel + `SHA256SUMS` + `MANIFEST.txt` | `bash package_cli_for_host.sh [user@host]` | 保证「安装的包 == 某个提交」；产物在目标机 `~/hai-cli-wheels/<short>/` |
 | [deploy_pod_dev.sh](deploy_pod_dev.sh) | **联调快通道**：把源码 tar 进运行中的 `hai-platform-0`（`/high-flyer/code/multi_gpu_runner_server`）并重启 `ugc_server` | `bash deploy_pod_dev.sh` | 只覆盖服务端代码；**任务侧/manager 仍需重建镜像** |
-| [smoke_env.sh](smoke_env.sh) | env 接口冒烟 19 项（API-11/API-13 正常 / 边界 / 幂等 / 越界 / 鉴权 / 注册表反序列化 / `source haienv`） | `bash smoke_env.sh http://10.205.52.200` | 期望 `PASS=19 FAIL=0` |
-| [e2e_env.sh](e2e_env.sh) | 端到端：fixture → `hai-cli env push` → 注册 → 任务内 `source haienv` + 探针 import | `bash e2e_env.sh` | 期望 `PASS=12 FAIL=0`；需**已部署含 env 实现的镜像** |
-| [verify_env.sh](verify_env.sh) | 一键验证：L1 单元 + 客户端单测 + L2 冒烟 + L3 E2E + workspace 回归 | `bash verify_env.sh`（`SKIP_E2E=1` / `SKIP_REG=1` 可裁剪） | 每步日志落在 `/tmp/verify_env_<step>.log` |
+| [smoke_env.sh](smoke_env.sh) | env 接口冒烟 20 项（API-11/API-13 正常 / 边界 / 幂等 / 越界 / 鉴权 / 注册表反序列化 / `source haienv`） | `bash smoke_env.sh http://10.205.52.200` | 期望 `PASS=20 FAIL=0` |
+| [e2e_env.sh](e2e_env.sh) | 端到端：fixture → `hai-cli env push` → 注册 → 任务内 `source haienv` + 探针 import | `bash e2e_env.sh` | 期望 `PASS=16 FAIL=0`；需**已部署含 env 实现的镜像** |
+| [verify_env.sh](verify_env.sh) | 一键验证：L1 单元 + 客户端单测 + L2 冒烟 + N3 幂等 + 回滚演练 + L3 E2E + workspace 回归 | `bash verify_env.sh`（`SKIP_E2E=1` / `SKIP_REG=1` / `SKIP_DRILL=1` 可裁剪） | 每步日志落在 `/tmp/verify_env_<step>.log`；103 实测 `PASS=8 FAIL=0` |
+| [check_env_idempotent.sh](check_env_idempotent.sh) | **N3 幂等自检**：首次预检 `_0` → 模拟「已上传未注册」→ 重试必须复用同一路径 → 补登记 → 重复注册记录数不增长 | `bash check_env_idempotent.sh [base_url]` | 期望 `PASS=5 FAIL=0` |
+| [env_rollback_drill.sh](env_rollback_drill.sh) | **回滚演练**：一级（关开关 → 三条写入路径全被拒 → `venv.db` 无改动 → 恢复）；`DRILL_L2=1` 追加二级（注释两条路由 → 404 → 恢复） | `bash env_rollback_drill.sh [base_url]`；`DRILL_L2=1 CLIENT_ENV_PATH=.. CLIENT_ENV_NAME=.. bash …` | 期望 `PASS=8`（一级）/ `PASS=13`（含二级）；关停 4–5s |
+| [env_metrics.sh](env_metrics.sh) | **最小看板**：抓 `/metrics` 汇总 env 请求量/成功率/注册耗时 P50·P95·P99/失败 reason，并做 5% 阈值判定 | `bash env_metrics.sh [metrics_url]` | 默认走 `kubectl exec` 抓 pod 内 `8083/metrics`；`WARN_RATE=` 可调 |
+| [env_alerts.yml](env_alerts.yml) | **告警规则（配置即代码）**：注册/预检失败率 > 5%、写失败、读失败（N3）、P99 > 500ms | `kubectl -n <ns> apply -f env_alerts.yml` | 103 无 Prometheus/Grafana → 未 apply；与 `env_metrics.sh` 同指标名 |
 
 > `patch_dockerfile.py` 还负责两件与本特性无关但必要的事：①把构建期 apt 源从 `archive.ubuntu.com`
 > 换成 `mirrors.aliyun.com`（103 上前者不可达，构建会卡在 `apt-get update`）；②7 条替换规则都带 `skip_if` 标记，

@@ -242,6 +242,18 @@ def test_u08_status_literals():
     assert set(ALL_STATUSES) == {'processing', 'loading', 'loaded', 'failed', 'deleted'}
 
 
+def test_u08b_load_result_image_url():
+    ''' Checklist 附录 A.1：load 响应的 image 是**完整三段 URL**（用户原样传给 -i），
+    train_image.image 列仍是裸名（另以 image_name 返回）。 '''
+    result = UserImage._load_result(
+        {'image': 'demo:v1', 'registry': 'registry.high-flyer.cn', 'shared_group': 'hfai',
+         'image_tar': '/r/demo.tar', 'status': 'loaded', 'task_id': 0, 'path': '/r/demo.tar'},
+        backend='register')
+    assert result['image'] == 'registry.high-flyer.cn/hfai/demo:v1'
+    assert result['image_name'] == 'demo:v1'
+    assert result['path'] == '/r/demo.tar'
+
+
 # --------------------------------------------------------------------------- TC-U09
 
 def test_u09_delete_group_isolation(monkeypatch):
@@ -328,10 +340,12 @@ def test_u12_self_check_never_raises(monkeypatch):
     result = image_context.image_self_check()
     assert result['ok'] is False
     assert any('image_root' in p for p in result['problems'])
-    assert any('registry' in p for p in result['problems'])
     assert any('loader_backend' in p for p in result['problems'])
     assert any('load_helper_image' in p for p in result['problems'])
+    # registry 为空是**回退默认值**（CMP-04：保留 registry.high-flyer.cn），不是自检告警项
+    assert result['registry'] == 'registry.high-flyer.cn'
     assert result['loader_backend'] == 'register'  # 非法值回退 P0 默认
+    assert result['enabled'] is False
 
 
 # --------------------------------------------------------------------------- 运行面脚本静态检查

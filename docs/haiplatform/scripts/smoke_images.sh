@@ -93,6 +93,11 @@ echo "== 0) 环境自检 =="
 MISSING_TAR="${IMG_ROOT}/__not_exists__.tar"
 
 echo
+echo "== 0.5) 清场（删除本用例两个 tar 的历史行，保证脚本可重复运行）=="
+psql_q "delete from train_image where image_tar in ('${TAR}','${TAR2}')" >/dev/null 2>&1 || true
+ok "已清理 ${TAR} 与 ${TAR2} 的历史行"
+
+echo
 echo "== 1) API-17 list（修订版：user_images 真实查询）=="
 CODE=$(call list "/ugc/user/train_image/list?token=${TOKEN}")
 [ "${CODE}" = "200" ] && ok "HTTP 200" || bad "HTTP ${CODE}"

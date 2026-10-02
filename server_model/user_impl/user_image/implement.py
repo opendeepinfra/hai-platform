@@ -117,8 +117,16 @@ class UserImage(UserImageExtras, IUserImage):
 
     @staticmethod
     def _load_result(row: dict, backend: str, reused: bool = False) -> dict:
+        image_name = row.get('image')
+        registry = row.get('registry') or ''
+        shared_group = row.get('shared_group') or ''
+        # 契约（Checklist 附录 A.1）：响应里的 `image` 是**完整三段 URL** —— 用户应当把它原样
+        # 传给 `-i`；裸镜像名（train_image.image 列）另用 image_name 给出（字段只增不改，CMP-05）。
+        image_url = '/'.join([registry, shared_group, image_name]) \
+            if (registry and shared_group and image_name) else image_name
         return {
-            'image': row.get('image'),
+            'image': image_url,
+            'image_name': image_name,
             'image_tar': row.get('image_tar'),
             'status': row.get('status'),
             'task_id': row.get('task_id') or 0,
@@ -178,7 +186,8 @@ class UserImage(UserImageExtras, IUserImage):
             image_tar=image_tar, image=image, path=path, shared_group=shared_group,
             registry=registry, status=status, task_id=0, message='', user_name=self.user.user_name)
         row = await TrainImageSelector.a_find_by_group_and_tar(shared_group, image_tar) or {
-            'image': image, 'image_tar': image_tar, 'status': status, 'task_id': 0, 'path': path}
+            'image': image, 'image_tar': image_tar, 'status': status, 'task_id': 0, 'path': path,
+            'registry': registry, 'shared_group': shared_group}
         logger.info(f'[IMAGE] load 成功 user={self.user.user_name} shared_group={shared_group} '
                     f'image={image} image_tar={image_tar} status={row.get("status")} '
                     f'path={row.get("path")} backend={backend}')

@@ -85,9 +85,10 @@ echo
 echo "-- 3) 运行面交付物（I16 / HC-08）"
 [ -f "${REPO}/marsv2/scripts/link_hfai_image.sh" ] \
   && ok "源码树存在 marsv2/scripts/link_hfai_image.sh" || bad "源码树缺 link_hfai_image.sh"
-OUT="$(sudo kubectl -n "${NS}" exec "${POD}" -- test -f /marsv2/scripts/link_hfai_image.sh 2>&1; echo "rc=$?")"
-[ "${OUT##*rc=}" = "0" ] && ok "平台镜像内含 /marsv2/scripts/link_hfai_image.sh" \
-  || warn "平台镜像内未见该脚本（任务侧由 configmap 挂载，但仍建议随镜像交付）"
+# 注意：/marsv2/scripts 是**任务期**的挂载点，平台 pod 里不存在；镜像内应在仓库路径下
+OUT="$(sudo kubectl -n "${NS}" exec "${POD}" -- test -f /high-flyer/code/multi_gpu_runner_server/marsv2/scripts/link_hfai_image.sh 2>&1; echo "rc=$?")"
+[ "${OUT##*rc=}" = "0" ] && ok "平台镜像内含 marsv2/scripts/link_hfai_image.sh" \
+  || bad "平台镜像内缺该脚本（HC-08：随镜像交付）"
 grep -q "link_hfai_image.sh" "${REPO}/one/hai-up.sh" 2>/dev/null \
   && ok "one/hai-up.sh 已登记 storage 挂载种子" || bad "one/hai-up.sh 未登记挂载种子（pod 内会 not found）"
 SEED="$(sudo kubectl -n "${NS}" exec "${POD}" -- psql -U root -d mars_db -tAc \

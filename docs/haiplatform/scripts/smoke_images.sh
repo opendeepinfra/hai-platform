@@ -232,11 +232,13 @@ echo
 echo "== 10) 运行面前置（I16/I17：脚本 / 挂载种子 / 节点 /data_local / helper 镜像）=="
 [ -f "${REPO:-/home/fireflyer/hai-platform}/marsv2/scripts/link_hfai_image.sh" ] \
   && ok "link_hfai_image.sh 存在于源码树" || info "（跳过源码树检查：REPO 未指向仓库）"
-if sudo kubectl -n "${NS}" exec "${POD}" -- test -f /marsv2/scripts/link_hfai_image.sh 2>/dev/null; then
-  ok "平台镜像内含 link_hfai_image.sh"
+if sudo kubectl -n "${NS}" exec "${POD}" -- test -f /high-flyer/code/multi_gpu_runner_server/marsv2/scripts/link_hfai_image.sh 2>/dev/null; then
+  ok "平台镜像内含 marsv2/scripts/link_hfai_image.sh"
 else
-  info "平台镜像内未见 /marsv2/scripts/link_hfai_image.sh（任务侧仍需校验，HC-08）"
+  bad "平台镜像内缺 marsv2/scripts/link_hfai_image.sh（HC-08）"
 fi
+SEED=$(psql_q "select count(*) from storage where mount_path='/marsv2/scripts/link_hfai_image.sh' and active")
+[ "${SEED}" = "1" ] && ok "storage 表已登记 link 脚本挂载种子（HC-08）" || bad "storage 表缺 link 脚本种子行"
 for NODE in k8s-slave01 k8s-slave02 k8s-slave03; do
   if multipass exec "${NODE}" -- test -d /data_local 2>/dev/null; then ok "${NODE}:/data_local 存在"; else bad "${NODE}:/data_local 缺失（I17①）"; fi
 done

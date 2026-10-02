@@ -347,17 +347,52 @@ def create_node_in_k8s(rank, node_schema):
     if node_schema.link_hfai_image:
         # 使用从 launcher 传来的数据, 避免查询数据库
         envs = [get_env_var(key=ee, value=os.environ.get(ee)) for ee in ['HFAI_IMAGE', 'HFAI_IMAGE_WEKA_PATH']]
+        # Q-5 / Q-6 / ADR-I4：基础镜像与 /data_local 路径**改为可配置**（I17：103 节点上
+        # registry.high-flyer.cn/google_containers/busybox:latest 不可达、/data_local 不存在）
+        load_helper_image = CONF.try_get('image.load_helper_image',
+                                         default='docker.io/library/busybox:latest')
+        data_local_path = CONF.try_get('image.data_local_path', default='/data_local')
+        init_volume_mounts = volume_mounts + [
+            client.V1VolumeMount(name='data-local', mount_path=data_local_path)]
+        volumes += [client.V1Volume(
+            name='data-local',
+            host_path=client.V1HostPathVolumeSource(path=data_local_path, type='DirectoryOrCreate'))]
+        # R-2：link 脚本需要访问**节点容器运行时**才能把 tar 导入本节点。
+        # 这些挂载**只加在 initContainer 上**（不污染主容器，SEC-07），且全部由配置开关控制：
+        # 留空表示沿用既有 storage 挂载 / 自带 ctr 的基础镜像。
+        containerd_socket = CONF.try_get('image.containerd_socket', default='')
+        runtime_bin_dir = CONF.try_get('image.runtime_bin_dir', default='')
+        image_mount_root = CONF.try_get('image.image_mount_root', default='')
+        if containerd_socket:
+            init_volume_mounts.append(client.V1VolumeMount(
+                name='containerd-sock', mount_path='/run/containerd/containerd.sock'))
+            volumes.append(client.V1Volume(
+                name='containerd-sock',
+                host_path=client.V1HostPathVolumeSource(path=containerd_socket, type='Socket')))
+            envs.append(get_env_var(key='HFAI_CONTAINERD_SOCK', value='/run/containerd/containerd.sock'))
+        if runtime_bin_dir:
+            init_volume_mounts.append(client.V1VolumeMount(
+                name='runtime-bin', mount_path='/host-bin', read_only=True))
+            volumes.append(client.V1Volume(
+                name='runtime-bin',
+                host_path=client.V1HostPathVolumeSource(path=runtime_bin_dir, type='Directory')))
+        if image_mount_root:
+            # 镜像 tar 按**同一路径**挂进 initContainer（HFAI_IMAGE_WEKA_PATH 就在这个根之下）
+            init_volume_mounts.append(client.V1VolumeMount(
+                name='image-root', mount_path=image_mount_root, read_only=True))
+            volumes.append(client.V1Volume(
+                name='image-root',
+                host_path=client.V1HostPathVolumeSource(path=image_mount_root, type='Directory')))
         init_containers = [client.V1Container(
             name=f'{CONTAINER_NAME}-load-image',
-            image='registry.high-flyer.cn/google_containers/busybox:latest',
+            image=load_helper_image,
             image_pull_policy=CONF.try_get('manager.image_pull_policy', default='IfNotPresent'),
             env=envs,
-            volume_mounts=volume_mounts + [client.V1VolumeMount(name='data-local', mount_path='/data_local')],
+            volume_mounts=init_volume_mounts,
             resources=client.V1ResourceRequirements(limits={'cpu': 1, 'memory': '200Mi'}),
             command=['/bin/sh'],
             args=['/marsv2/scripts/link_hfai_image.sh'],
         )]
-        volumes += [client.V1Volume(name='data-local', host_path=client.V1HostPathVolumeSource(path='/data_local'))]
     # note 这个由 launcher 传进来，init manager 的启动要快，不要走 io，类似我对 HFAI_IMAGE_WEKA_PATH 的处理
     # room = db_engine.execute(f'''select "room" from "host" where "node" = '{node.node}' ''').fetchall()[0][0]
     if node_schema.image is None:

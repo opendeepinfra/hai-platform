@@ -31,7 +31,7 @@ class WorkspaceHandleHfaiCommandArgs(HandleHfaiCommandArgs):
 
 
 @images.command(cls=WorkspaceHandleHfaiCommandArgs, name='list')
-@click.option('-a', '--all', 'show_all', required=False, is_flag=True, default=False, show_default=True, help='是否显示所有镜像(含删除的)')
+@click.option('-a', '--all', 'show_all', required=False, is_flag=True, default=False, show_default=True, help='是否显示所有镜像（默认隐藏 status 含 deleted 的记录）')
 async def list_images(show_all=False):
     """
     列举用户组在萤火二号上的镜像列表，以及镜像在萤火二号上的状态
@@ -60,31 +60,41 @@ async def list_images(show_all=False):
     for column in ['image', 'status', 'shared_group', 'image_tar', 'updated_at']:
         user_table.add_column(column)
     for i in user_imgs:
-        i_name = os.path.join(i['registry'], i['shared_group'], i['image'])
+        # 防御性取值（R-8）：服务端字段缺失时不再 KeyError
+        registry = i.get('registry', '')
+        shared_group = i.get('shared_group', '')
+        image = i.get('image', '')
+        status = i.get('status', '')
+        image_tar = i.get('image_tar', '')
+        i_name = os.path.join(registry, shared_group, image)
         if i_name not in last_img_status:
-            last_img_status[i_name] = i['status']
-        # 以最新的为准
-        if i_name in last_img_status and i['status'] != last_img_status[i_name]:
-            i['status'] = f"{last_img_status[i_name]} by new tar({i['status']})"
-        if 'deleted' in i['status'] and not show_all:
+            last_img_status[i_name] = status
+        # 以最新的为准（服务端按 updated_at DESC 返回，首个即最新）
+        if i_name in last_img_status and status != last_img_status[i_name]:
+            status = f"{last_img_status[i_name]} by new tar({status})"
+        if 'deleted' in status and not show_all:
             continue
         user_table.add_row(i_name,
-                      i['status'],
-                      i['shared_group'], os.path.basename(i['image_tar']),
-                      i['updated_at'],
+                      status,
+                      shared_group, os.path.basename(image_tar),
+                      i.get('updated_at', ''),
                       end_section=True)
     console.print(user_table)
 
 
 @images.command(cls=WorkspaceHandleHfaiCommandArgs, name='load')
 @click.argument('image_tar', required=True, metavar='image_tar')
-async def load_image(image_tar):
+@click.option('-i', '--image', 'image', required=False, default=None,
+              help='镜像名 name:tag（不含 "/"）；缺省由 tar 文件名派生，服务端不会自动补 tag')
+@click.option('--force', 'force', required=False, is_flag=True, default=False, show_default=True,
+              help='该 tar 的镜像记录已被删除时，强制重新加载')
+async def load_image(image_tar, image=None, force=False):
     """
     加载镜像 tar 包到萤火二号上，tar包应该在萤火二号上共享目录下的，外部用户需要先把 tar 包上传上来操作
     """
     if os.path.exists(image_tar):
         abs_image_tar = os.path.abspath(image_tar)
-        await load_image_tar(abs_image_tar)
+        await load_image_tar(abs_image_tar, image=image, force=force)
     else:
         print('不存在这个镜像包')
 
@@ -93,7 +103,9 @@ async def load_image(image_tar):
 @click.argument('image', required=True, metavar='image')
 async def delete_image(image):
     """
-    删除萤火二号上的镜像，以释放空间
-    注意: 1、 该镜像的命名并不会被回收 2、 用户也可以删除自己组内的其他用户的镜像
+    删除萤火二号上的镜像记录
+    注意: 1、该操作**只把记录标记为 deleted，不回收任何存储空间**（registry tag / 共享盘 tar / 节点镜像缓存均保留）
+          2、该镜像的命名并不会被回收
+          3、用户也可以删除自己组内的其他用户的镜像（禁止跨组）
     """
     await delete_image_by_name(image_name=image)

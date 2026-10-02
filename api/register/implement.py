@@ -18,6 +18,7 @@ import api.query.optimized.service_task as aq_optimized_service_task
 import api.user.access as au_access
 import api.resource.cloud_storage as ar_cloud_storage
 import api.resource.storage as ar_storage
+import api.resource.image as ares_image
 
 
 if 'operating' in REG_SERVERS:
@@ -69,6 +70,11 @@ if 'ugc' in REG_SERVERS:
     app.post('/ugc/user/nodeport/delete')(at_port.delete_node_port_svc)
     app.post('/ugc/user/nodeport/bind')(at_port.bind_node_port_svc)
     app.post('/ugc/user/train_image/list')(aq_optimized_resource.get_train_images)
+    # hai-cli images（用户自定义镜像）：API-15 加载登记 / API-16 状态回报 / API-18 删除
+    # （设计 docs/haiplatform/images/images-server-design.md §4 / DEV-03；API-17 list 路由已存在）
+    app.post('/ugc/user/train_image/load')(ares_image.hfai_image_load)
+    app.post('/ugc/user/train_image/update_status')(ares_image.hfai_image_update_status)
+    app.post('/ugc/user/train_image/delete')(ares_image.hfai_image_delete)
 
     app.post('/ugc/cloud/cluster_files/list')(ar_cloud_storage.list_cluster_files)
 
@@ -92,6 +98,8 @@ if 'ugc' in REG_SERVERS:
     app.add_event_handler('shutdown', ar_cloud_storage.shutdown_workers)
     # env 路径自检（OPS-01，只告警不阻断）
     app.add_event_handler('startup', ar_storage.startup_env_check)
+    # image 路径自检（CFG-04，只告警不阻断）
+    app.add_event_handler('startup', ares_image.startup_image_check)
 
 
 if 'query' in REG_SERVERS:

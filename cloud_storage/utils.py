@@ -20,7 +20,7 @@ from fastapi_pagination.bases import AbstractPage, AbstractParams
 
 from conf import CONF
 from conf.utils import (FileInfo, FileType, FilePrivacy, DatasetType, list_local_files_inner, hashkey,
-                        get_env_root)
+                        get_env_root, get_image_root)
 from db import a_redis, redis_conn
 from utils import asyncwrap
 from .metrics import DB_FAILURE_COUNTER
@@ -475,6 +475,14 @@ def get_base_path(username, group, name, file_type, file_privacy: FilePrivacy = 
         cluster_base_path = f'{env_root}/{username}/{name}'
         cloud_base_path = f'{group}/shared/hfai_envs/{username}/{name}'
         check_is_subpath(env_root, cluster_base_path)
+    elif file_type == FileType.IMAGE:
+        # 用户自定义镜像共享根（设计 docs/haiplatform/images/images-server-design.md §3.2 / CFG-03）：
+        #   cluster: {image_root}/{name}   ← 镜像 tar 在共享盘上的位置
+        #   cloud  : 不参与对象存储同步（tar 由用户直接放共享盘），保持空串
+        image_root = get_image_root()
+        cluster_base_path = f'{image_root}/{name}'
+        cloud_base_path = ''
+        check_is_subpath(image_root, cluster_base_path)
     elif file_type == FileType.DATASET:
         # 本地数据集根目录, public
         public_dataset_base_path = CONF.cloud.storage.service.public_dataset_path

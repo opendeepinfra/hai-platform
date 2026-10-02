@@ -266,3 +266,130 @@ def get_pod_id() -> str:
 
 def get_instance_id() -> str:
     return f'{os.environ.get("POD_NAME", "POD_NAME-0")}-{os.getpid()}'
+
+
+# ---------------------------------------------------------------------------
+# hai-cli images（用户自定义镜像）—— 设计 docs/haiplatform/images/images-server-design.md §3.4 / §9.1
+#
+# 配置面：
+#   [cloud.storage.service] image_path         镜像资产共享根（单点，见 conf.utils.get_image_root）
+#   [image] enabled / enabled_users / enabled_groups          灰度开关（OPS-01）
+#   [image] registry                           URL 第一段（默认 registry.high-flyer.cn，CMP-04）
+#   [image] loader_backend                     register（P0 默认）/ task / registry（§5.3）
+#   [image] name_regex                         镜像名白名单（SEC-03）
+#   [image] load_helper_image                  initContainer 基础镜像（Q-6 / ADR-I4）
+#   [image] data_local_path                    link 脚本可见的宿主目录（Q-5 / ADR-I4）
+# ---------------------------------------------------------------------------
+
+#: 合法的数据面后端（设计 §5.3）
+IMAGE_LOADER_BACKENDS = ('register', 'task', 'registry')
+_DEFAULT_IMAGE_REGISTRY = 'registry.high-flyer.cn'
+_DEFAULT_LOAD_HELPER_IMAGE = 'docker.io/library/busybox:latest'
+_DEFAULT_DATA_LOCAL_PATH = '/data_local'
+
+
+def get_image_root() -> str:
+    '''image_root = 镜像资产共享根（[cloud.storage.service].image_path，单点定义）。'''
+    from conf.utils import get_image_root as _get_image_root
+    return _get_image_root()
+
+
+def get_image_registry() -> str:
+    '''镜像 URL 第一段；默认保留 registry.high-flyer.cn，但新代码不依赖它可达（CMP-04）。'''
+    value = str(cfg('image.registry', default=_DEFAULT_IMAGE_REGISTRY) or '').strip()
+    return value or _DEFAULT_IMAGE_REGISTRY
+
+
+def get_image_loader_backend() -> str:
+    '''数据面后端：非法/缺失一律回退 register（P0 默认，ADR-I2）。'''
+    value = str(cfg('image.loader_backend', default='register') or 'register').strip().lower()
+    return value if value in IMAGE_LOADER_BACKENDS else 'register'
+
+
+def get_image_load_helper_image() -> str:
+    '''initContainer（load-image）的基础镜像；默认改为各节点已有的 busybox（Q-6 / I17②）。'''
+    value = str(cfg('image.load_helper_image', default=_DEFAULT_LOAD_HELPER_IMAGE) or '').strip()
+    return value or _DEFAULT_LOAD_HELPER_IMAGE
+
+
+def get_image_data_local_path() -> str:
+    '''link 脚本 initContainer 里 /data_local 对应的宿主路径（Q-5）。'''
+    return str(cfg('image.data_local_path', default=_DEFAULT_DATA_LOCAL_PATH) or _DEFAULT_DATA_LOCAL_PATH)
+
+
+def get_image_name_regex() -> str:
+    '''
+    镜像名白名单（FR-07 / SEC-03）。配置可收紧，但**不允许**放宽到含 '/'（HC-05）。
+    '''
+    from conf.utils import IMAGE_NAME_RE
+    pattern = str(cfg('image.name_regex', default=IMAGE_NAME_RE.pattern) or '')
+    if not pattern or '/' in pattern:
+        pattern = IMAGE_NAME_RE.pattern
+    return pattern
+
+
+def image_feature_enabled() -> bool:
+    '''总开关（默认 false：未显式开启时零行为变化，OPS-01）。'''
+    return bool(cfg('image.enabled', default=False))
+
+
+def check_image_enabled(user):
+    '''
+    灰度开关（OPS-01 / SEC-08）：enabled / enabled_users / enabled_groups。
+    未开启时抛 FEATURE_DISABLED（HTTP 200 + success=0），由接入层统一处理。
+    '''
+    if not image_feature_enabled():
+        raise WorkspaceError(ErrorCode.FEATURE_DISABLED, '镜像功能未开放')
+
+    enabled_users = cfg('image.enabled_users', default=None) or []
+    if enabled_users and user.user_name not in list(enabled_users):
+        raise WorkspaceError(ErrorCode.FEATURE_DISABLED,
+                             f'用户 {user.user_name} 不在镜像功能白名单内')
+
+    enabled_groups = cfg('image.enabled_groups', default=None) or []
+    if enabled_groups:
+        try:
+            allowed = user.in_any_group(list(enabled_groups))
+        except Exception:
+            allowed = False
+        if not allowed:
+            raise WorkspaceError(ErrorCode.FEATURE_DISABLED,
+                                 f'用户 {user.user_name} 所在用户组不在镜像功能白名单内')
+
+
+def image_self_check() -> dict:
+    '''
+    启动自检（CFG-04）：image_root 存在且可写、registry 已配置、loader_backend 合法、
+    load_helper_image 非空。**失败只告警不阻断**（对齐 env_registry_self_check）。
+    '''
+    problems = []
+    image_root = get_image_root()
+    try:
+        if not os.path.isdir(image_root):
+            problems.append(f'image_root 不存在: {image_root}')
+        elif not os.access(image_root, os.W_OK):
+            problems.append(f'image_root 不可写: {image_root}')
+    except Exception as e:  # pragma: no cover - 自检自身不得抛异常
+        problems.append(f'image_root 检查异常: {e}')
+
+    if not get_image_registry():
+        problems.append('image.registry 为空')
+    if str(cfg('image.loader_backend', default='register') or 'register').strip().lower() not in IMAGE_LOADER_BACKENDS:
+        problems.append(f'image.loader_backend 取值非法: {cfg("image.loader_backend", default=None)}')
+    if not str(cfg('image.load_helper_image', default=_DEFAULT_LOAD_HELPER_IMAGE) or '').strip():
+        problems.append('image.load_helper_image 为空')
+
+    result = {
+        'ok': len(problems) == 0,
+        'problems': problems,
+        'image_root': image_root,
+        'enabled': image_feature_enabled(),
+        'loader_backend': get_image_loader_backend(),
+        'registry': get_image_registry(),
+    }
+    if problems:
+        logger.warning('image path check: WARN - ' + '; '.join(problems))
+    else:
+        logger.info(f'image path check: OK (image_root={image_root}, '
+                    f'loader_backend={result["loader_backend"]}, enabled={result["enabled"]})')
+    return result

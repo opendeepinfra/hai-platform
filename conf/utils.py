@@ -27,6 +27,8 @@ class FileType(str, Enum):
     WORKSPACE = 'workspace'
     # venv
     ENV = 'env'
+    # 用户自定义镜像（hai-cli images）
+    IMAGE = 'image'
     # hfai 文档
     DOC = 'doc'
     # hfai pip 源
@@ -471,3 +473,78 @@ def get_env_registry_path(user) -> str:
 def get_env_dir_name(name, suffix=0) -> str:
     '''env 目录名：{name}_{suffix}，与客户端 haienv.client.model.get_haienv_path 一致。'''
     return f'{name}_{int(suffix)}'
+
+
+# ---------------------------------------------------------------------------
+# hai-cli images（用户自定义镜像）路径与命名单点定义 —— 设计 docs/haiplatform/images/images-server-design.md §3
+#
+# 约定（三个概念必须分清，设计 §3.1）：
+#   image_tar  = 用户提供的 tar 包在共享盘上的路径（API-15 入参 / train_image.image_tar）
+#   image      = 镜像名 name[:tag]，自身**不含 '/'**（与 registry/shared_group 拼成 3 段 URL）
+#   path       = 镜像资产在共享盘上的位置（运行期 HFAI_IMAGE_WEKA_PATH → link 脚本）
+#
+# 约束：
+#   - 本模块被 `conf/__init__.py` star-import，**不得**在导入期 import conf（循环导入）
+#   - 只依赖 os/re + 惰性 CONF；任何外部异常都退化为默认值，不得让 import 失败
+#   - 服务端与客户端（hfai client 的 conf/utils.py 副本）共用这一份实现
+# ---------------------------------------------------------------------------
+
+DEFAULT_IMAGE_PATH = '/nfs_shared/image'
+# 镜像名白名单：name[:tag]；首字符字母数字，其余允许字母数字与 . _ -；**不允许 '/'**（HC-05 / SEC-03）
+IMAGE_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,127})?$')
+
+
+def normalize_image_path(path) -> str:
+    '''
+    归一化镜像资产共享根：去尾斜杠 / 去重复分隔符 / 转绝对路径。
+    空值取默认 /nfs_shared/image（设计 §3.2）。
+    '''
+    if path is None or (isinstance(path, str) and path.strip() == ''):
+        path = DEFAULT_IMAGE_PATH
+    try:
+        path = os.path.expanduser(str(path).strip())
+        return os.path.normpath(os.path.abspath(path))
+    except Exception:
+        return DEFAULT_IMAGE_PATH
+
+
+def get_image_path() -> str:
+    '''配置项 [cloud.storage.service] image_path（镜像资产共享根），默认 /nfs_shared/image。'''
+    try:
+        from conf import CONF
+        value = CONF.try_get('cloud.storage.service.image_path', default=DEFAULT_IMAGE_PATH)
+    except Exception:
+        value = DEFAULT_IMAGE_PATH
+    return normalize_image_path(value)
+
+
+def get_image_root() -> str:
+    '''
+    image_root = 镜像资产共享根（单点定义，对齐 env 的 get_env_root()）。
+
+    所有 image_tar 必须落在它之下（SEC-01 / FR-13），并且是运行期 initContainer 里
+    可见的路径（HFAI_IMAGE_WEKA_PATH 的前缀）。
+    '''
+    return get_image_path()
+
+
+def derive_image_name(image_tar) -> str:
+    '''
+    由 tar 包路径派生镜像名：basename 去掉 .tar 后缀（I6：旧客户端只发 tar 路径）。
+
+    **不自动补 tag**（设计 §4.1「实现修正 I6b」）：任务侧做的是**逐字节**比较，
+    补 :latest 会让用户 `-i registry/<group>/demo` 永远匹配不上。
+    '''
+    base = os.path.basename(str(image_tar).rstrip('/'))
+    if base.endswith('.tar'):
+        base = base[:-len('.tar')]
+    return base
+
+
+def is_valid_image_name(name) -> bool:
+    '''镜像名白名单校验（不含 '/'、非空、长度受限）。返回 bool，不抛异常（分层纪律）。'''
+    if not name or not isinstance(name, str):
+        return False
+    if '/' in name:
+        return False
+    return bool(IMAGE_NAME_RE.match(name))

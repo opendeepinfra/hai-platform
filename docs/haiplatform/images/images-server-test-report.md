@@ -180,7 +180,6 @@ NOTICE:  relation "train_image_group_tar_uindex" already exists, skipping
 | D3 | 热部署后 `ugc_server` 崩：`No module named 'image_metrics'` | `deploy_pod_dev.sh` 的 PATHS 白名单漏了新文件 | PATHS 补 `image_metrics.py` | 热部署实测 |
 | D4 | initContainer 立刻退出（exit 1）：`libdl.so.2: cannot open shared object file` | 宿主 `ctr` 动态链接，helper 镜像 busybox 自带 glibc 缺 `libdl` | 挂宿主 glibc 目录（第一版） | 节点 `ctr run` 等价复现 |
 | D5 | initContainer 立刻退出：`/bin/sh: ... version 'GLIBC_2.38' not found` | 第一版把宿主 glibc 挂到 `/lib/x86_64-linux-gnu`，覆盖了 busybox **自己**的 libc（Debian trixie/2.41） | 改为挂到 **`/host-lib`**，脚本用 `/host-lib/ld-linux-x86-64.so.2 --library-path` 显式运行 ctr（`runtime_loader_file` 随之移除） | 真实任务 pod |
-| D6 | `load` 响应 `image` 之外的字段与 DB 不一致？——无（已由 D2 覆盖） | — | — | — |
 | D7 | 任务链每 ~110s 重启一次，最终才成功（task 27→36） | 1 GB tar 首次导入 >1 分钟，而 `manager.unschedulable_timeout_Ms=1`(60s)；`check_unschedulable` 把 Pending+`Initialized=False` 的 pod 判成 BUILDING → `STOP_CODE.UNSCHEDULABLE(33)` | `check_unschedulable` 放行「initContainer 正在运行」的 pod（**新风险 I19**） | L3 E2E（任务耗时异常） |
 | D8 | 镜像构建在 `pip install jupyterlab_hai_platform_ext` 处 `ReadTimeoutError` | 该行 pip 未走镜像源，103 直连 `files.pythonhosted.org` 超时 | `patch_dockerfile.py` 把该行也钉到 tuna 源并加 `--retries/--timeout` | 构建失败日志 |
 | D9 | `k8s-slave02` 缺 helper 镜像 busybox | 节点镜像清单不一致（slave01/03 有） | 节点侧 `microk8s.ctr images pull`（纳入 `check_images_preflight.sh` 检查项） | 部署前置自检 |

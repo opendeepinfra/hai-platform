@@ -144,6 +144,9 @@ bash ~/hai-platform/docs/haiplatform/scripts/e2e_env.sh
 | 任务内 `$HAIENV_PATH` 目录不存在 | 任务容器没挂 `env_root`：跑 `mount_env_root.sh`（storage 表里的 Directory 挂载） |
 | `env push` 上传后 stage2 报 `download <key> failed: ... 404` | 客户端把集群路径当成对象 key 前缀了（C-6）：确认服务端 API-11 返回 `cloud_path`、且客户端已升级（`--env_remote_path` 必须是 `{group}/shared/hfai_envs/...`） |
 | 任务里 `source haienv` 报 `<prefix>/activate: No such file or directory` | C-7：ENV 上传排除了 `activate`；确认 `workspace_api.push` 的 ENV 分支 `exclude_list = []` |
+| `haienv create` 打印 `WARNING: 检测到的 nvcc 均不在平台基线 11.x 内` | 这是**提示不是错误**（CUDA 不影响 conda 环境本身）；确认本机是否有可用的 11.x nvcc（会依次看 `nvcc` 与 `/usr/local/cuda/bin/nvcc`），或调 `HAIENV_CUDA_VERSION_RE`；需要恢复硬门禁就设 `HAIENV_CUDA_STRICT=1` |
+| `haienv create` 提示 python 版本与集群基线不一致 | 默认取当前解释器（如 3.10），集群基础环境是 3.8：加 `-p 3.8`（基线可用 `HAIENV_CLUSTER_PY` 调整） |
+| `haienv create` 提示未加 `--no_extend` | 只有在平台镜像/开发容器里 `extend` 才有意义（继承平台基础环境）；裸机上请加 `--no_extend` |
 | `env push` 明明改了环境却提示「数据已同步」 | 本地 env 目录与集群落盘目录是同一个（共享盘）；E2E 必须把本地放在共享盘之外（`e2e_env.sh` 默认 `/tmp/hai-env-e2e`） |
 | 启动日志没有 `env path check` | `api/register/implement.py` 的 ugc 段缺 `startup_env_check` 注册，或看的是别的 server 日志 |
 

@@ -73,9 +73,17 @@ haienv create < myenv >
 
 注意不加 `--no_extend` 命令表示从 HAI Platform 默认环境扩展构建用户环境，最大降低环境配置的工作量。环境创建后即可进入环境并执行自定义安装。
 
-> `haienv create` 要求容器内存在 `nvcc`，且其 CUDA 版本为 **11.x（含 11.5）**；其它版本会给出明确提示。
-> 如确需在其它 CUDA 版本下创建，可显式设置正则覆盖，例如
-> `HAIENV_CUDA_VERSION_RE='^12\.' haienv create myenv`（正则按 `release <主>.<次>` 匹配）。
+> `haienv create` 会检查容器内的 CUDA 与 python 版本，并给出**提示（不阻断创建）**：
+>
+> - **CUDA**：平台基线为 **11.x（含 11.5）**。会依次探测 `nvcc` 与 `/usr/local/cuda/bin/nvcc`，
+>   任一命中即视为匹配；都不匹配时只打印 WARNING（CUDA 版本不影响 conda 环境本身，但之后安装
+>   CUDA 相关 wheel（torch/cupy 等）时可能与集群运行时/驱动不匹配）。
+>   判定规则可用 `HAIENV_CUDA_VERSION_RE` 调整（按 `release <主>.<次>` 匹配）；
+>   需要像以前那样**硬性拦截**时设置 `HAIENV_CUDA_STRICT=1`。
+> - **python**：默认取当前解释器版本，而集群基础环境是 `3.8`；两者不一致时会提示，建议显式
+>   `haienv create myenv --no_extend -p 3.8`（基线可用 `HAIENV_CLUSTER_PY` 调整）。
+> - **extend**：默认的「扩展当前环境」只在平台镜像/开发容器内有意义；在其它机器上会继承**本机**
+>   python 环境，此时应加 `--no_extend`。
 
 除此以外，`haienv` 支持用户在本地（集群外）建立个人环境并推送到集群，这种方式建立的环境无法扩展基础环境，需要用户自己验证和维护。
 

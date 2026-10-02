@@ -41,7 +41,7 @@ l1_unit() {
 l1_client() {
   # 客户端侧单元测试：env push 链路（E3/E7/E13/C-6）+ haienv create 的 CUDA 门禁（E10/C-8）
   cd "${REPO}" && HAIENV_PATH=$(mktemp -d) python3 -m pytest \
-    tests/env/test_client_push.py tests/env/test_haienv_create_cuda.py -q --no-header -p no:cacheprovider
+    tests/env/test_client_push.py tests/env/test_haienv_create_prereq.py -q --no-header -p no:cacheprovider
 }
 
 step l1_unit l1_unit

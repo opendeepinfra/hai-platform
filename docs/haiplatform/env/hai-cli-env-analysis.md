@@ -233,7 +233,7 @@ echo Y | haienv create hai202207 --no_extend
 | **E7** | 中 | 共享盘跨用户目录权限未知,服务端写他人 `venv.db` 可能失败 | `one/release.sh:16-17`(仅顶层 777) | 注册前的权限自检 + 明确失败语义(SEC-03) |
 | **E8** | 中 | 服务端与客户端 `haienv` 包版本偏移会导致 pickle 反序列化失败 | `sqlite_dict.py`(pickle)、`Dockerfile:75-77` | 版本兼容校验(设计 ADR-E4) |
 | **E9** | 中 | `list_haienv` / `set_env` 把 `user` 直接拼进路径,无 `..` 校验 | `client/api.py:137-142`、`haienv.py:27-43` | 路径校验(SEC-02) |
-| **E10** | 低 | `create` 硬编码 CUDA 11.1/11.3,新镜像不可用 | `command.py:41-43` | 放宽为"存在即可"或配置化 —— **已修（C-8）**：默认放行 CUDA **11.x 全部小版本（含 11.5）**，可用 `HAIENV_CUDA_VERSION_RE` 收紧/放宽（`command.py` 的 `check_cuda_version()`，见 [env-server-test-report.md](env-server-test-report.md) §7 C-8） |
+| **E10** | 低 | `create` 硬编码 CUDA 11.1/11.3,新镜像不可用 | `command.py:41-43` | 放宽为"存在即可"或配置化 —— **已修（C-8，方案 1）**：CUDA 检查**降级为提示**（不再硬拦），依次探测 `nvcc` 与 `/usr/local/cuda/bin/nvcc`，任一命中平台基线 **11.x（含 11.5）** 即视为匹配；`HAIENV_CUDA_STRICT=1` 可恢复硬门禁、`HAIENV_CUDA_VERSION_RE` 可调判定范围；并顺带补上「python 版本与集群基线对齐」「非平台环境下 extend」两条提示（见 [env-server-test-report.md](env-server-test-report.md) §7 C-8） |
 | **E11** | 低 | `list -a/--all` 无效;`-u 自己` 归类错 | `command.py:50-52,76-83` | 顺手修 |
 | **E12** | 低 | 文档只描述"支持推送到集群",未说明入口缺失 | `docs/_sources/guide/environment.md.txt:76` | 补文档或实现 |
 | **E13** | 高 | 子进程命令用 `sys.argv[0]` 拼接;挂到 `env` 插件后 `argv[0]` 是 `haienv`,拼出的 `haienv workspace push` 非法 | `client/api/venv_api.py:24-26` | 显式解析 `haiworkspace` 可执行文件(设计 §6.2) |

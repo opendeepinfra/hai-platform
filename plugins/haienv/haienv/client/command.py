@@ -12,12 +12,46 @@ import getpass
 import json
 
 
-# 支持的 CUDA 版本：默认放行 **CUDA 11.x 的全部小版本**（11.0 ~ 11.9，含 11.5）。
-# 可用环境变量 HAIENV_CUDA_VERSION_RE 覆盖，例如：
-#   HAIENV_CUDA_VERSION_RE='^11\.(1|3|5)$'    # 收紧
-#   HAIENV_CUDA_VERSION_RE='^1[12]\.\d+$'      # 放宽到 12.x
+# ---------------------------------------------------------------------------
+# `haienv create` 的前置提示（默认**只告警不阻断**）
+#
+# 设计取舍（见 docs/haiplatform/env/env-server-test-report.md C-8 与方案分析）：
+#   * CUDA 版本**不参与**环境内容生成：conda prefix 里不记录任何 CUDA 信息，
+#     真正决定「任务里能否跑」的是任务容器映像 + 驱动 + 环境里安装的 wheel。
+#     因此它只适合做提示，不适合做硬门禁（硬门禁会误拦：一台机器上 apt 的
+#     nvidia-cuda-toolkit(11.5) 与 /usr/local/cuda(12.9) 并存时，只探测后者就会误判；
+#     平台自建镜像里甚至根本没有 nvcc）。
+#   * 需要硬门禁的部署可设置 HAIENV_CUDA_STRICT=1。
+# ---------------------------------------------------------------------------
+
+# 平台基线：生产镜像基于 nvcr.io/nvidia/cuda:11.3.0-devel（更早为 11.1），见 one/release.sh:31
+CLUSTER_CUDA_BASELINE = '11.x'
 DEFAULT_CUDA_VERSION_RE = r'^11\.\d+$'
-NVCC_CMD = '/usr/local/cuda/bin/nvcc -V 2>/dev/null || nvcc -V 2>/dev/null'
+# 依次探测这些 nvcc（顺序只影响展示顺序）：**任一**满足受支持版本即视为匹配。
+NVCC_CANDIDATES = ('nvcc', '/usr/local/cuda/bin/nvcc')
+
+# 集群基础环境的 python（平台镜像为 3.8.10；可用 HAIENV_CLUSTER_PY 覆盖）
+CLUSTER_BASE_PY = os.environ.get('HAIENV_CLUSTER_PY', '3.8')
+# 平台镜像/开发容器特征：命中任一即认为「在平台环境内」
+PLATFORM_ENV_MARKERS = (
+    '/marsv2/scripts/pip_conf.yaml',
+    '/marsv2/scripts',
+    '/high-flyer/code/multi_gpu_runner_server',
+)
+_TRUE_VALUES = ('1', 'true', 'yes', 'y', 'on')
+
+
+def _env_truthy(name: str) -> bool:
+    return str(os.environ.get(name, '')).strip().lower() in _TRUE_VALUES
+
+
+def _warn(message: str):
+    print(f'\033[1;33m WARNING: \033[0m{message}', flush=True)
+
+
+def _major_minor(version: str) -> str:
+    match = re.match(r'\s*(\d+)\.(\d+)', str(version or ''))
+    return f'{match.group(1)}.{match.group(2)}' if match else ''
 
 
 def get_cuda_version(nvcc_output: str = None) -> str:
@@ -26,26 +60,101 @@ def get_cuda_version(nvcc_output: str = None) -> str:
 
     nvcc 输出形如：`Cuda compilation tools, release 11.5, V11.5.119`
     '''
-    if nvcc_output is None:
-        nvcc_output = os.popen(NVCC_CMD).read()
     match = re.search(r'release\s+(\d+\.\d+)', nvcc_output or '')
     return match.group(1) if match else ''
 
 
-def check_cuda_version(nvcc_output: str = None) -> str:
-    '''
-    校验容器内的 CUDA 版本（`haienv create` 的前置检查）。
+def collect_nvcc_reports(candidates=None) -> dict:
+    '''返回 {nvcc 路径: `nvcc -V` 输出}，只保留有输出的候选。'''
+    reports = {}
+    for candidate in (candidates or NVCC_CANDIDATES):
+        output = os.popen(f'{candidate} -V 2>/dev/null').read()
+        if output and output.strip():
+            reports[candidate] = output
+    return reports
 
-    默认要求 CUDA **11.x**（含 11.5）；不满足时抛 AssertionError 并给出可操作提示。
+
+def check_cuda_version(nvcc_output: str = None, strict: bool = None) -> dict:
     '''
-    output = os.popen(NVCC_CMD).read() if nvcc_output is None else nvcc_output
-    assert output, '未找到/usr/local/cuda/bin/nvcc 以及 nvcc，请设置环境变量PATH'
-    version = get_cuda_version(output)
+    `haienv create` 的 CUDA **提示**（默认不阻断）。
+
+    - 依次探测 `NVCC_CANDIDATES`（PATH 中的 `nvcc` 与 `/usr/local/cuda/bin/nvcc`），
+      **任一**命中受支持范围即视为匹配（解决「一台机器多个 nvcc」的误判）；
+    - 默认受支持范围 CUDA `11.x`（含 11.5），可用 `HAIENV_CUDA_VERSION_RE` 覆盖；
+    - 不匹配/未检测到时：默认打印 WARNING 并继续；`HAIENV_CUDA_STRICT=1`
+      （或显式 `strict=True`）时才抛 AssertionError。
+
+    :return: `{'ok', 'strict', 'pattern', 'versions', 'matched'}`
+    '''
     pattern = os.environ.get('HAIENV_CUDA_VERSION_RE') or DEFAULT_CUDA_VERSION_RE
-    assert version and re.match(pattern, version), (
-        f'目前 haienv 支持 CUDA 11.x（含 11.5），当前检测到 CUDA {version or "未知"}；'
-        f'如确需其它版本，可设置环境变量 HAIENV_CUDA_VERSION_RE 覆盖当前规则 {pattern}')
-    return version
+    if strict is None:
+        strict = _env_truthy('HAIENV_CUDA_STRICT')
+
+    if nvcc_output is not None:
+        reports = {'(给定输出)': nvcc_output}
+    else:
+        reports = collect_nvcc_reports()
+
+    versions = {candidate: get_cuda_version(output) for candidate, output in reports.items()}
+    matched = next((v for v in versions.values() if v and re.match(pattern, v)), None)
+    result = {'ok': bool(matched), 'strict': bool(strict), 'pattern': pattern,
+              'versions': versions, 'matched': matched}
+
+    if matched:
+        print(f'CUDA 提示：检测到 CUDA {matched}（基线 {CLUSTER_CUDA_BASELINE}），在受支持范围内', flush=True)
+        return result
+
+    if versions:
+        detail = '、'.join(f'{candidate}: {version or "无法解析"}' for candidate, version in versions.items())
+        head = f'检测到的 nvcc 均不在平台基线 {CLUSTER_CUDA_BASELINE} 内：[{detail}]'
+    else:
+        detail = ''
+        head = f'未检测到 nvcc（已尝试 {", ".join(NVCC_CANDIDATES)}）'
+    tail = (f'CUDA 版本不影响 conda 环境本身，但若之后要安装 CUDA 相关 wheel（torch/cupy 等），'
+            f'可能与集群运行时/驱动不匹配；如确需调整判定范围可设置 HAIENV_CUDA_VERSION_RE（当前 {pattern}）')
+    if strict:
+        raise AssertionError(f'{head}；已启用 HAIENV_CUDA_STRICT=1，拒绝创建。{tail}')
+    _warn(f'{head}；{tail}；如需强制拦截请设置 HAIENV_CUDA_STRICT=1')
+    return result
+
+
+def check_python_version(py: str, strict: bool = None) -> dict:
+    '''
+    提示「目标 python 版本」与集群基础环境（默认 3.8）是否一致。
+
+    conda 环境默认取**当前解释器**的版本，在裸机（如 python 3.10）上建出的环境，
+    在集群 3.8 的任务里很可能不可用 —— 这是比 CUDA 更常见的真实坑。
+    '''
+    want, base = _major_minor(py), _major_minor(CLUSTER_BASE_PY)
+    result = {'ok': (not want) or want == base, 'py': py, 'want': want,
+              'cluster_base': base, 'strict': False}
+    if not want or want == base:
+        return result
+    _warn(f'目标 python 版本 {py} 与集群基础环境 python {CLUSTER_BASE_PY} 不一致；'
+          f'该环境在集群任务里可能不可用，建议加 `-p {CLUSTER_BASE_PY}`（或用 HAIENV_CLUSTER_PY 调整基线）')
+    return result
+
+
+def in_platform_env() -> bool:
+    '''是否在平台镜像/开发容器内（判断 `extend` 语义是否成立）。'''
+    return bool(os.environ.get('TASK_NAME')) or any(os.path.exists(p) for p in PLATFORM_ENV_MARKERS)
+
+
+def check_extend_policy(extend: bool, in_platform: bool = None) -> dict:
+    '''
+    提示 `extend`（默认开启）在**非平台环境**下的语义问题。
+
+    `extend=True` 会继承「当前 python 环境」：在平台镜像/开发容器里继承的是平台基础环境（符合预期），
+    但在裸机上继承的是**本机** python，生成的环境在集群里通常不可用；此时应使用 `--no_extend`。
+    '''
+    if in_platform is None:
+        in_platform = in_platform_env()
+    result = {'ok': not extend or bool(in_platform), 'extend': bool(extend),
+              'in_platform': bool(in_platform)}
+    if extend and not in_platform:
+        _warn('当前不在平台镜像/开发容器内，但未指定 `--no_extend`：extend 会继承**本机** python 环境，'
+              '生成的环境在集群任务里大概率不可用；建议加 `--no_extend`')
+    return result
 
 
 class HandleHfaiGroupArgs(click.Group):
@@ -76,8 +185,13 @@ async def create(haienv_name, no_extend, py, extra_search_dir, extra_search_bin_
     """
     print(f"当前虚拟环境目录为{get_path_prefix()}，如需更改请设置环境变量HAIENV_PATH", flush=True)
     assert os.popen('uname').read().strip() == 'Linux', 'haienv只支持Linux环境'
-    # 默认支持 CUDA 11.x（含 11.5），可用 HAIENV_CUDA_VERSION_RE 覆盖
+    # 前置检查一律「提示不阻断」（HAIENV_CUDA_STRICT=1 可让 CUDA 检查变成硬门禁）：
+    #   ① CUDA：与平台基线 11.x 的差异只影响之后安装的 CUDA 相关 wheel，不影响 conda 环境本身
+    #   ② python：默认取当前解释器版本，裸机上常与集群基础环境 3.8 不一致
+    #   ③ extend：默认开启，在非平台环境里会继承本机 python（语义不对）
     check_cuda_version()
+    check_python_version(py)
+    check_extend_policy(extend=not no_extend)
     result = await create_haienv(haienv_name=haienv_name, extend=('False' if no_extend else 'True'), py=py, extra_search_dir=extra_search_dir, extra_search_bin_dir=extra_search_bin_dir, extra_environment=extra_environment)
     print(result['msg'])
 

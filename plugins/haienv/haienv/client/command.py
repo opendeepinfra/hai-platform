@@ -1,4 +1,5 @@
 import asyncclick as click
+import re
 import sys
 import os
 from .api import create_haienv, list_haienv, remove_haienv
@@ -9,6 +10,42 @@ from rich.box import ASCII2
 from .model import get_db_path, get_path_prefix, Haienv, check_user_name
 import getpass
 import json
+
+
+# 支持的 CUDA 版本：默认放行 **CUDA 11.x 的全部小版本**（11.0 ~ 11.9，含 11.5）。
+# 可用环境变量 HAIENV_CUDA_VERSION_RE 覆盖，例如：
+#   HAIENV_CUDA_VERSION_RE='^11\.(1|3|5)$'    # 收紧
+#   HAIENV_CUDA_VERSION_RE='^1[12]\.\d+$'      # 放宽到 12.x
+DEFAULT_CUDA_VERSION_RE = r'^11\.\d+$'
+NVCC_CMD = '/usr/local/cuda/bin/nvcc -V 2>/dev/null || nvcc -V 2>/dev/null'
+
+
+def get_cuda_version(nvcc_output: str = None) -> str:
+    '''
+    从 `nvcc -V` 输出里取 CUDA release 版本号（如 '11.5'）；取不到返回 ''。
+
+    nvcc 输出形如：`Cuda compilation tools, release 11.5, V11.5.119`
+    '''
+    if nvcc_output is None:
+        nvcc_output = os.popen(NVCC_CMD).read()
+    match = re.search(r'release\s+(\d+\.\d+)', nvcc_output or '')
+    return match.group(1) if match else ''
+
+
+def check_cuda_version(nvcc_output: str = None) -> str:
+    '''
+    校验容器内的 CUDA 版本（`haienv create` 的前置检查）。
+
+    默认要求 CUDA **11.x**（含 11.5）；不满足时抛 AssertionError 并给出可操作提示。
+    '''
+    output = os.popen(NVCC_CMD).read() if nvcc_output is None else nvcc_output
+    assert output, '未找到/usr/local/cuda/bin/nvcc 以及 nvcc，请设置环境变量PATH'
+    version = get_cuda_version(output)
+    pattern = os.environ.get('HAIENV_CUDA_VERSION_RE') or DEFAULT_CUDA_VERSION_RE
+    assert version and re.match(pattern, version), (
+        f'目前 haienv 支持 CUDA 11.x（含 11.5），当前检测到 CUDA {version or "未知"}；'
+        f'如确需其它版本，可设置环境变量 HAIENV_CUDA_VERSION_RE 覆盖当前规则 {pattern}')
+    return version
 
 
 class HandleHfaiGroupArgs(click.Group):
@@ -39,8 +76,8 @@ async def create(haienv_name, no_extend, py, extra_search_dir, extra_search_bin_
     """
     print(f"当前虚拟环境目录为{get_path_prefix()}，如需更改请设置环境变量HAIENV_PATH", flush=True)
     assert os.popen('uname').read().strip() == 'Linux', 'haienv只支持Linux环境'
-    assert os.popen('/usr/local/cuda/bin/nvcc -V 2>/dev/null || nvcc -V 2>/dev/null').read(), '未找到/usr/local/cuda/bin/nvcc 以及 nvcc，请设置环境变量PATH'
-    assert any(v in os.popen('/usr/local/cuda/bin/nvcc -V 2>/dev/null || nvcc -V 2>/dev/null').read() for v in ['11.1', '11.3']), '目前haienv只支持cuda 11.1和cuda 11.3'
+    # 默认支持 CUDA 11.x（含 11.5），可用 HAIENV_CUDA_VERSION_RE 覆盖
+    check_cuda_version()
     result = await create_haienv(haienv_name=haienv_name, extend=('False' if no_extend else 'True'), py=py, extra_search_dir=extra_search_dir, extra_search_bin_dir=extra_search_bin_dir, extra_environment=extra_environment)
     print(result['msg'])
 

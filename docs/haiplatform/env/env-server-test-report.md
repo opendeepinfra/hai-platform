@@ -13,13 +13,13 @@
 | --- | --- |
 | L1 单元测试 | `tests/env/test_env_registry.py` **40 passed / 1 skipped**;`cloud_storage/service/env_registry.py` 行覆盖率 **100%**(225/225,UT-01 要求 ≥85%) |
 | L2 接口冒烟 | `smoke_env.sh` **PASS=20 FAIL=0**(API-11 正常/**cloud_path 合规**/旧形态/幂等、API-13 注册/幂等/越界/非法名、鉴权、注册表反序列化、`source haienv`) |
-| 客户端单测 | `tests/env/test_client_push.py` **10 passed**(E3/E7/E13 回归 + 分级结果 + 注册 body 形态) |
+| 客户端单测 | `test_client_push.py` **10 passed** + `test_haienv_create_cuda.py` **14 passed**（共 24） |
 | L3 端到端 | `e2e_env.sh` **PASS=16 FAIL=0**（本地在**集群外** `/tmp`）：`env push` → **RustFS 期望 key 命中** → 集群落盘 + 注册 → 二次 push 幂等 → 任务 `succeeded` 且 `PROBE_OK`（`HAIENV_PATH=/nfs-shared/hai-platform/workspace/hfai_envs/haiadmin`） |
 | workspace 回归 | `smoke_ugc.sh` **8/8**、`e2e_workspace.sh all` **19/19**(改动落在共用代码 `conf/utils.py` / `cloud_storage/utils.py`,回归必跑) |
 | 一键复现 | `verify_env.sh` → **验证汇总: PASS=6 FAIL=0**(l1_unit / l1_client / l2_smoke / l3_e2e / reg_ugc / reg_workspace) |
 | 零 DDL | `git status --short db_schemas/` 为空(HC-03 / GATE-05 / REG-01) |
 | 单点化 | `grep -rn hfai_envs --include=*.py` 只剩 `conf/utils.py`(定义)与 `cloud_storage/utils.py` 的 S3 key(CMP-05 要求不变) |
-| 实现期新发现缺陷 | **7 个**(C-1 客户端 wheel 缺 `hfai/conf.utils`;C-2 `env push` 子进程多一个 `workspace` 词;C-3 `asyncio.to_thread` 在 py3.8 不存在;C-4 `build_hai.sh` 用管道吞掉镜像构建失败;**C-5 构建机 `archive.ubuntu.com` 不可达导致 docker build 卡死**;**C-6 `--env_remote_path` 用了集群路径导致对象 key 错、stage2 404**;**C-7 ENV 排除 `activate` 导致集群侧环境不可 source**) |
+| 缺陷（实现期新发现 7 + 分析报告落地 1） | **C-1** 客户端 wheel 缺 `hfai/conf.utils`;**C-2** `env push` 子进程多一个 `workspace` 词;**C-3** `asyncio.to_thread` 在 py3.8 不存在;**C-4** `build_hai.sh` 用管道吞掉镜像构建失败;**C-5** 构建机 `archive.ubuntu.com` 不可达导致 docker build 卡死;**C-6** `--env_remote_path` 用了集群路径 → 对象 key 错、stage2 404;**C-7** ENV 排除 `activate` → 集群侧环境不可 `source`;**C-8**（= 分析报告 E10）`haienv create` 的 CUDA 门禁过窄 → 默认支持 **CUDA 11.x（含 11.5）** |
 | 任务侧 | `HAIENV_PATH` 已单点化;任务容器需额外挂载 `env_root`(见 §5.4,已脚本化) |
 
 ---
@@ -60,6 +60,7 @@
 | 文件 | 内容 |
 | --- | --- |
 | `tests/env/test_env_registry.py` | L1:U/P/REG/S/灰度 边界共 41 条(不 mock `HaienvConfig`,注册表读写走真实 `haienv` 包) |
+| `tests/env/test_haienv_create_cuda.py` | `haienv create` 的 CUDA 门禁 14 条（11.x 全放行 / 非 11.x 拒绝 / 覆盖规则 / nvcc 缺失） |
 | `tests/env/test_client_push.py` | 客户端:10 条(E3/E7/E13 + 分级 + 注册 body + C-6 缺 cloud_path 回归) |
 | `docs/haiplatform/scripts/patch_env_override.py` | 幂等写 `env_path` + `env_push_*` |
 | `docs/haiplatform/scripts/mount_env_root.sh` | 把 `env_root` 挂进任务容器(storage 表 Directory 记录) |
@@ -166,10 +167,12 @@ env_registry.py: 可执行行=225 已覆盖=225 未覆盖=0 行覆盖率=100.0%
 API-13 `text/plain` 与 `application/json` 注册/幂等记录数不增长/`exists=true` 复用路径/`/tmp/evil` 等 3 类越界/他人目录/非法名/缺 py、
 注册表客户端反序列化、`hai-cli env list` 可见、`source haienv` + 探针包 import、伪造 `username/group` 被忽略。
 
-### 5.3 客户端单测(10 项)
+### 5.3 客户端单测(24 项 = push 10 + CUDA 门禁 14)
 
 ```
-10 passed
+tests/env/test_client_push.py ..........          [10 passed]   # E3/E7/E13 + 分级 + 注册 body + C-6 回归
+tests/env/test_haienv_create_cuda.py ..............  [14 passed]   # C-8：CUDA 11.x（含 11.5）默认放行
+24 passed
 ```
 
 E3(`--file_type env` 而非 `FileType.ENV`)、E13(插件二进制 `haiworkspace push` / 主 CLI `hai-cli workspace push` 两条分支都有断言,且不含 `haienv workspace push`)、
@@ -241,7 +244,7 @@ PASS | 任务内 HAIENV_PATH 与数据面同源（TC-T01）
 ```
 
 最终在镜像 `envtest5`（= 本工作树）上重跑 `verify_env.sh`：**PASS=6 FAIL=0**
-（`l1_unit` 40 passed/1 skipped、`l1_client` 10 passed、`l2_smoke` 20/20、`l3_e2e` 16/16、`reg_ugc` 8/8、`reg_workspace` 19/19）。
+（`l1_unit` 40 passed/1 skipped、`l1_client` 24 passed、`l2_smoke` 20/20、`l3_e2e` 16/16、`reg_ugc` 8/8、`reg_workspace` 19/19）。
 
 > **用例有效性**：第一版 `e2e_env.sh` 把「本地」env 直接建在集群 `env_root` 下，`haiworkspace push`
 > 判定「数据已同步」而**完全跳过上传**，于是对象 key 错误（C-6）与 `activate` 被排除（C-7）两个缺陷都被掩盖。
@@ -272,6 +275,7 @@ S3 对象名 = 本地目录 basename（`e2eenv_0.zip`），服务端按**同一�
 | **C-2** | `env push` 报 `Error: No such command 'workspace'`,随后「上传venv失败」 | `hai-cli workspace push` 会被派发成 `haiworkspace push`(插件自身即子命令集合),解析出插件路径后再补 `workspace` 词就多了一层 | `_build_push_cmd` 按可执行文件分支:主 CLI 补 `workspace`,插件不补 | 实测 `env push` 成功;`test_tc_c02_dispatch_plugin_vs_main_cli` |
 | **C-3** | `asyncio.to_thread` 在 pod(python 3.8)内 `AttributeError` | `asyncio.to_thread` 是 3.9+ API,设计文档只是「建议」 | 自实现 `_to_thread`(`loop.run_in_executor` + `functools.partial`) | L1 `test_async_wrappers` |
 | **C-4** | 镜像构建**失败**但 `build_hai.sh` 仍打印 `ALL DONE: <tag>` | `sudo docker buildx build … 2>&1 \| tail -40` 的退出码是 `tail` 的,`set -e` 失效 | 改 `\| tee <log> \| tail -40` 并 `set -o pipefail`,再加「镜像必须存在」校验 | 本次构建取消时实测:日志有 `ERROR: failed to build … Canceled` 却输出 `ALL DONE` |
+| **C-8**（= 分析 E10） | `haienv create` 只认 CUDA 11.1/11.3：CUDA 11.5/11.8 的镜像**默认无法创建环境**（报「目前haienv只支持cuda 11.1和cuda 11.3」） | `command.py:43` 用 `any(v in nvcc_out for v in ['11.1','11.3'])` 做字面量子串匹配 | 抽出 `get_cuda_version()` / `check_cuda_version()`，默认正则 `^11\.\d+$`（**11.x 全部小版本，含 11.5**），可用 `HAIENV_CUDA_VERSION_RE` 覆盖；顺带把重复的 `nvcc -V` 调用合并为一次 | 见 §7.1 前后对照表；`tests/env/test_haienv_create_cuda.py` **14 passed** |
 | **C-6** | 集群外 env push：对象被写到 `nfs-shared/.../<dir>.zip`，服务端 stage2 读 `{group}/shared/hfai_envs/...` → **404 Not Found**，push 判定失败（但对象与空目录已留下） | 客户端 `--env_remote_path` 用的是 API-11 返回的**集群文件系统路径**，而该参数在客户端是**对象存储 key 前缀**（`workspace_util.upload_files` 里 `dst_file = f'{remote_path}/{f.path}'`），服务端则自行用 `get_base_path(..., FileType.ENV)` 推导 cloud 侧前缀 → 两边不一致 | API-11 增加返回 `cloud_path`（对象存储前缀，服务端推导）；客户端用它作 `--env_remote_path`，缺该字段时明确失败（不静默用集群路径）；新增客户端回归用例 `test_tc_c10_missing_cloud_path` | E2E 第 3 步 `s3 .../e2eenv_0.zip -> FOUND`；修复前同一步为 `MISSING (404)` |
 | **C-7** | 集群外 env push 成功后，任务里 `source haienv` 报 `<prefix>/activate: No such file or directory` → 环境不可用（AC-03 失败） | `workspace_api.push` 的 ENV 分支 `exclude_list = ['activate', 'pip.conf']` 把激活脚本排除了，集群侧没人再生成它 | 去掉该排除项（conda 生成的 activate 用 `${BASH_SOURCE[0]}` 推导环境自身路径，换到集群路径仍可用；仅 `PIP_CONFIG_FILE`/`PYTHONUSERBASE` 仍指向创建时的绝对路径，不影响 source 与 import） | 修复前任务日志 `.../e2eenv_0/activate: No such file or directory`；修复后 `HF_ENV_NAME= e2eenv` + `PROBE_OK` |
 | **C-5** | docker build 第一步 `apt-get update` 卡住 15+ 分钟(索引都拉不完) | 103 上 `archive.ubuntu.com` / `security.ubuntu.com` 基本不可达(实测 `curl` 超时),而 `mirrors.aliyun.com` / `mirrors.tuna.tsinghua.edu.cn` 有 ~3 MB/s | `patch_dockerfile.py` 新增规则:构建时 `sed` 改写 `/etc/apt/sources.list` 到 aliyun 镜像;同时把 7 条规则都补上 `skip_if` 标记,让补丁**幂等** | 换源后同一构建 6s 拉完 11.3 MB 索引;整镜像构建 ~16 分钟(含 apt/pip) |
@@ -279,6 +283,23 @@ S3 对象名 = 本地目录 basename（`e2eenv_0.zip`），服务端按**同一�
 > 另有 2 项属环境/流程经验(非产品缺陷):①任务容器需要额外挂载 `env_root`(§5.4);②只覆盖 pod 源码不足以验证任务侧(§6)。
 
 ---
+
+### 7.1 C-8 前后对照（CUDA 版本门禁）
+
+```
+CUDA   旧逻辑(字面量 11.1/11.3)     新默认(check_cuda_version)
+11.0   REJECT                      ACCEPT
+11.1   ACCEPT                      ACCEPT
+11.3   ACCEPT                      ACCEPT
+11.5   REJECT                      ACCEPT      ← 本次诉求
+11.8   REJECT                      ACCEPT
+12.0   REJECT                      REJECT
+10.2   REJECT                      REJECT
+```
+
+覆盖规则实测（`HAIENV_CUDA_VERSION_RE`）：`^12\.` → 12.9 ACCEPT；`^11\.(1|3|5)$` → 11.1/11.3/11.5 ACCEPT、11.8 REJECT。
+本机（103）真实 `nvcc` 为 **CUDA 12.9**，默认门禁按其规则拒绝并给出「设置 `HAIENV_CUDA_VERSION_RE`」的提示；
+`NVCC_CMD` 指向 11.5 的伪造 nvcc 时 ACCEPT（`tests/env/test_haienv_create_cuda.py::test_check_uses_nvcc_command_when_no_output`）。
 
 ## 8. 验收对照(AC-01 ~ AC-12)
 

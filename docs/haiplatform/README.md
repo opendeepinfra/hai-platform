@@ -83,7 +83,7 @@ docs/haiplatform/
 | [images-server-checklist.md](images/images-server-checklist.md) | **实施与上线 Checklist**：阶段 0–17（GATE/ENV/CFG/**DB**/DEV/UT/API/E2E/SEC/PERF/OBS/OPS/TASK/CMP/REL/DOC+DEP/RB/POST/ACC + **阶段 17 上传通道（本分支主体）**）、接口契约快照（附录 A，含 **A.6 上传通道**）、冒烟脚本（附录 B，含 B.2 上传冒烟）、排障速查（附录 C）、与 workspace/env 组的映射（附录 D）、未验证清单 | §1 GATE · §3 DB · §4 DEV · §5 API · §6 E2E · §11 TASK · **§18 阶段 17** · §17 ACC · 附录 A/B/C/D |
 | [images-server-task-list.md](images/images-server-task-list.md) | **执行视图**：现状实测核对（21 项，含**第 21 项「没有面向 images 的上传通道」**）、需求/约束汇总、S0–S7 文件级任务（旧分支已完成）、**S8 上传通道（本分支主体）+ S9 P0 资产并入与入口切换**、103 两套环境测试任务（T-11/T-12/T-13/T-14）、待确认决策 Q-1~Q-12、文档间不一致裁决、里程碑（M0~M4）与关键路径 | §1 现状核对 · §3 任务列表（§3.9 S8 / §3.10 S9） · §4 测试任务 · §5 待确认 · §6 不一致裁决 · §7 里程碑 |
 | [images-server-decisions.md](images/images-server-decisions.md) | **S0 决策记录**：基线 `33a5b26` 的 11 文件 md5 核对（与旧分支逐字一致）与**缺失物清单**、Q-1~Q-8 冻结（本分支不复议）、**Q-9~Q-12 上传主入口四项决策（建议冻结）**、R-2 定案（运行时通路只挂 initContainer：socket / ctr / 宿主 glibc 到 `/host-lib` + 显式 loader）、6 项文档间裁决（含「**不自动补 `:latest`**」「本分支口径优先」）、GATE-01~GATE-09 勾选对照 | §1 基线 · §2 Q-1~Q-8 · §3 Q-9~Q-12 · §4 R-2 · §5 裁决 · §6 GATE |
-| [images-server-test-report.md](images/images-server-test-report.md) | **实现与 103 实测记录**（证据来自旧分支 tag `f2cb559`）：落地文件清单、L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 E2E `PASS=26 FAIL=0`（强制重导入版）、迁移两轮重放、workspace/env 回归零回归、`/metrics` 与一级回滚演练、**9 个实现期缺陷（含新风险 I19：长 init 被 unschedulable 看门狗打断）**、**本分支上传通道未实现的现状核对**、本分支重跑计划与期望值 | §0 结论 · §1 环境 · §3 L1 · §4 L2 · §5 DB · §6 缺陷 · §7 L3+回归+回滚 · **§7.4 上传通道未验证** · §9 重跑计划 |
+| [images-server-test-report.md](images/images-server-test-report.md) | **实现与 103 实测记录**：P0 证据（旧分支 tag `f2cb559`）——落地文件清单、L1 `33 passed`、L2 `PASS=44 FAIL=0`、L3 E2E `PASS=26 FAIL=0`（强制重导入版）、迁移两轮重放、workspace/env 回归零回归、`/metrics` 与一级回滚演练、9 个实现期缺陷（含新风险 I19）；**本分支 §9.1** = S9-2 在新基线重跑（preflight `30/0`、L1 `33 passed`、L2 `44/0`、L3 `26/0`、回归全绿），**§9.2** = 上传通道端到端 `e2e_images_push.sh` **`PASS=33 WARN=1 FAIL=0`** 与实现期缺陷 **D10/D11/D13**（+ 环境限制 **D14**），**§9.3** = 未做项（FI-09~FI-11 故障注入、AC-17 续传腿、PERF） | §0 结论 · §1 环境 · §3 L1 · §4 L2 · §5 DB · §6 缺陷 · §7 L3+回归+回滚 · **§7.4 上传通道已实现** · **§9 本分支实测（S9-2/S8-6）** |
 
 > **上传通道（本分支主入口）一句话**：`images push` **复用** `workspace`/`env` 的 RustFS/S3 流水线，
 > 只加 `file_type=image` 分支 + 强制 `no_zip=true` + 落点必须在 `image_path` 之下；服务端四处改动
@@ -91,10 +91,12 @@ docs/haiplatform/
 > 客户端一条命令，节点侧一行不改（HC-14）。需求 FR-16~FR-20 · 设计 §3.5/§4.6/§5.6/§6.4/§7.5/§9.5 · ADR-I11~I14 ·
 > 用例 §4.11 + E2E-09/10 + FI-09~12 · Checklist 阶段 17（14 项已勾选，103 实测 `PASS=33 WARN=1 FAIL=0`）。
 
-> **与 [hai-cli-client-server-audit.md](hai-cli-client-server-audit.md) 的关系**：审计记录了客户端侧 **C-3**
-> （`images load/delete` 抛 `AttributeError`），但**全文没有出现 `user_images`**、**没有任何 images 的 `S-x`**、
-> §5 缺口矩阵也**没有 images 行**，且**完全未覆盖运行面**（`link_hfai_image` / `HFAI_IMAGE_WEKA_PATH` / launcher 查表注入）。
-> `images` 文档集是这些结论的补充与修订，裁决项见任务列表 §6。
+> **与 [hai-cli-client-server-audit.md](hai-cli-client-server-audit.md) 的关系**：审计（**第三版，基线 `f995cbe`**）已把
+> images 的 **C-3 标为已闭环**、ugc 路由 **15 → 19**、`not implemented` 桩 **32 → 28**，并把 s3/rustfs 的
+> 「静态 AK/SK、prefix 不强制」（**R-14**）作为待收口的安全项登记；但审计的**视角是横切差分**，对
+> **运行面**（`link_hfai_image.sh` / `HFAI_IMAGE_WEKA_PATH` / launcher 查表注入 / initContainer 导入）与
+> **上传通道**（`images push` → RustFS → 共享盘 → 登记）仍以 `images/` 文档集为准。
+> 两者的差异与裁决见 [images/images-server-task-list.md](images/images-server-task-list.md) §6。
 
 ## 3. 实施视图（需求梳理 + 任务列表）
 
@@ -135,6 +137,6 @@ docs/haiplatform/
 
 | 文档 | 内容 | 关键章节 |
 | --- | --- | --- |
-| [hai-cli-client-server-audit.md](hai-cli-client-server-audit.md) | **客户端 / 服务端实现现状审计**（基线 `d372319`，初版 `b866c10`，文首有变更说明）：把 `hai-cli` 全部子命令与服务端全部路由（**85 条**，operating 35 / query 33 / ugc **15** / monitor 2）放在一张表上做「调用 ↔ 注册」差分；`default.py`/`implement.py`/`custom.py` 三层约定与「桩的三种含义」判别规则；**6 条客户端调用缺服务端路由**、32 个 `not implemented` 桩的可达性分类、C-1~C-11 客户端缺陷与 S-1~S-11 服务端缺陷（含 C-7/C-8 闭环状态表）、按 P0–P3 排序的不完整清单、收口顺序建议、复现命令 | §0 结论速览 · §2.3 三层约定 · §3 客户端清单 · §4 服务端清单 · §5 缺口矩阵 · §7 env 判定 · §8 不完整清单 · §9 收口顺序 |
+| [hai-cli-client-server-audit.md](hai-cli-client-server-audit.md) | **客户端 / 服务端实现现状审计**（**第三版基线 `f995cbe`**；第二版 `d372319`、初版 `b866c10`，文首有变更说明）：把 `hai-cli` 全部子命令与服务端全部路由（**89 条**，operating 35 / query 33 / ugc **19**（含 **train_image 4 条**）/ monitor 2）放在一张表上做「调用 ↔ 注册」差分；`default.py`/`implement.py`/`custom.py` 三层约定与「桩的三种含义」判别规则；**6 条客户端调用缺服务端路由**（不变；images 的 3 条已闭环）、**28 个** `not implemented` 桩的可达性分类、C-1~C-11 客户端缺陷与 S-1~S-11 服务端缺陷（含 **C-3**/C-7/C-8 闭环状态表）、**R-14（s3 前缀不强制）**、按 P0–P3 排序的不完整清单、收口顺序建议、复现命令 | §0 结论速览 · §2.3 三层约定 · §3 客户端清单 · §4 服务端清单 · §5 缺口矩阵 · §7 env 判定 · §8 不完整清单 · §9 收口顺序 |
 
-> 该文档是**横切视角**：`workspace/`、`env/` 与 `images/` 三套文档是单特性深挖，本文做全局面盘点与交叉验证，结论与三者一致（images 的差异与修订见 §2.6 的说明与任务列表 §6）。
+> 该文档是**横切视角**：`workspace/`、`env/` 与 `images/` 三套文档是单特性深挖，本文做全局面盘点与交叉验证。**当前基线 `f995cbe`**（第三版）：images 的控制面 + 运行面 + 上传通道已实现并 103 实测通过，C-3 闭环、ugc 路由 15 → 19、桩 32 → 28；运行面与上传通道的深挖仍以 `images/` 文档集为准（差异与裁决见 [images/images-server-task-list.md](images/images-server-task-list.md) §6）。

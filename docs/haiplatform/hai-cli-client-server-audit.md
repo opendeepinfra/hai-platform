@@ -9,9 +9,11 @@
 > - 三者结论一致，可互为佐证。
 >
 > **审计基线**：初版 `b866c10`（2026-10-02，当时工作区含未提交的 `docs/haiplatform/env/` 新增与 README 修改）；
-> **本版更新至 `d372319`**（2026-10-02，工作区干净、与 `origin/feature/hai-cli-env-server-design` 同步）。
+> 第二版 `d372319`（2026-10-02，工作区干净、与 `origin/feature/hai-cli-env-server-design` 同步）；
+> **本版（第三版）更新至 `f995cbe`**（2026-10-02，分支 `feature/hai-cli-images-rustfs-design`：`hai-cli images`
+> 的**控制面 + 运行面 + 上传通道**均已实现并在 103 实测通过）。
 >
-> **两次基线之间发生了什么**（`git log --oneline b866c10..d372319`，10 个提交）：
+> **初版 → 第二版之间发生了什么**（`git log --oneline b866c10..d372319`，10 个提交）：
 >
 > | 提交 | 内容 | 对本文的影响 |
 > | --- | --- | --- |
@@ -25,13 +27,23 @@
 > | `9f9e86b` | **精简 M3**：N4 数据面开关、N3 幂等/fail-closed、NFS 目录可见性、最小看板、版本兼容提示 | §4.5 S-7 在 env 侧闭环；env 侧新增 N1–N9 台账 |
 > | `d372319` | Checklist 复核（74/133 已勾） | —— |
 >
-> **本次复核方式**：§4.1/§5/§7/附录 C 的数字与判定**在本版基线上重跑了附录 C 的脚本**（路由 83→85、缺口 7→6、
-> 桩 33→32、客户端从不调用的路由仍为 41）；env 实测证据取自 `docs/haiplatform/env/env-server-test-report.md` §5/§9
+> **第二版复核方式**：§4.1/§5/§7/附录 C 的数字与判定在 `d372319` 上重跑了附录 C 的脚本（路由 83→85、缺口 7→6、
+> 桩 33→32、客户端从不调用的路由为 41）；env 实测证据取自 `docs/haiplatform/env/env-server-test-report.md` §5/§9
 > 与 `docs/haiplatform/scripts/verify_env.sh`（103 上 `PASS=8 FAIL=0`）。
-> **未复核**：S-1~S-11、C-3~C-6、C-9~C-11 等与 env 无关的项沿用初版静态审计结论（本版未复跑这些路径，也未改这些代码）。
+> 第二版**未复核**：S-1~S-11、C-3~C-6、C-9~C-11 等与 env 无关的项沿用初版静态审计结论（第二版未复跑这些路径，也未改这些代码）。
+>
+> **第三版（本版）复核方式**：在 `f995cbe` 上重跑附录 C 命令 1/2/3 —— **路由 85→89**（`ugc` 15→19）、
+> **本仓缺口仍 6 条**（差集输出仍 8 条，`/monitor_v2/*` 2 条属独立监控服务）、
+> **已注册但客户端从不调用 41→42 条**（新增的 `/ugc/user/train_image/update_status` 由服务端数据面回报）、
+> **桩 32→28**（`api/resource/image/default.py` 的 4 个 `hfai_image_*` 具名桩已被真实实现取代）。
+> images 实测证据取自 [images/images-server-test-report.md](images/images-server-test-report.md) §9.1/§9.2：
+> preflight `PASS=30 FAIL=0`、L1 镜像内 `43 passed, 2 skipped` + host 客户端 `2 passed`、L2 `PASS=44 FAIL=0`、
+> L3 `PASS=26 FAIL=0`、上传通道 `e2e_images_push.sh` **`PASS=33 WARN=1 FAIL=0`**、workspace/env 回归 `8/0·19/0·20/0·16/0`。
+> **第三版未复核**：S-1~S-11 中与 images 无关者、C-4/C-5/C-6/C-9/C-10/C-11，以及 §6/§7 的 workspace/env 端到端结论，
+> 均沿用第二版静态结论（本版未复跑这些路径、未改这些代码）。
 >
 > **方法**：以只读代码审计为主，**未修改任何源文件**；本版额外重跑了附录 C 的统计脚本，并引用 103 上的实测证据。三条主线：
-> 1. **AST 级核对**：把 `api/register/implement.py` 注册的路由（初版 83 条，本版 **85 条**）逐一解析到处理函数定义，确认「无注册但函数缺失」；
+> 1. **AST 级核对**：把 `api/register/implement.py` 注册的路由（初版 83 条 → 第二版 85 条 → **本版 89 条**）逐一解析到处理函数定义，确认「无注册但函数缺失」；
 > 2. **全量差分**：抓取 `client/**`、`plugins/**`、`base_model/**` 中所有 `mars_url()/...` 调用点，与注册表做程序化差集；
 > 3. **桩可达性判定**：对每个 `default.py` 中返回 `not implemented` 的函数，检查是否被同名 `implement.py` 覆盖、是否被注册为路由。
 >
@@ -46,17 +58,22 @@
 | 客户端核心命令面 | ✅ 基本完整 | 15 个核心子命令 + 2 个插件命令；缺陷见 §3.4（C-1~C-11） |
 | 客户端 `workspace` 插件 | ✅ 主链路已实现并端到端验证 | 7 子命令；URL 拼接已统一取 `.value`（余 3 处裸插值见 §3.4 C-1） |
 | 客户端 `env`（haienv）插件 | ✅ **跨端链路已实现并端到端验证** | 7 个子命令（新增 `push`）；C-7/C-8 已闭环 |
-| 服务端路由 | ✅ 处理函数齐全，无「空注册」 | **85 条**（operating 35 / query 33 / ugc **15** / monitor 2） |
+| 服务端路由 | ✅ 处理函数齐全，无「空注册」 | **89 条**（operating 35 / query 33 / ugc **19** / monitor 2） |
 | 服务端 workspace（`/ugc/*`） | ✅ 9 条全部真实实现（非桩） | service 层 + DB + provider 齐备 |
 | 服务端 env（`/ugc/*`） | ✅ 2 条接口（API-11 预检 / API-13 注册）+ **零 DDL** 注册表 | `cloud_storage/service/env_registry.py`、`api/resource/storage/default.py:52,89` |
-| 服务端 P1 与部分能力 | ❌ 桩未注册 / 无实现 | 32 个 `not implemented` 桩中，31 个未被覆盖 |
-| 前后端对接 | ⚠️ **6 条客户端调用没有对应路由**（初版 7 条） | 5 条有桩未注册 + 1 条完全无实现；`/ugc/update_cluster_venv` 已闭环 |
+| 服务端 images（`/ugc/user/train_image/*`） | ✅ **4 条真实实现 + 1 条 list**（控制面 + 运行面 + 上传通道） | `api/resource/image/default.py:48,85,126,145`、`api/register/implement.py:75-79`；`images push` 上传闭环 103 实测见 [images/images-server-test-report.md](images/images-server-test-report.md) §9.1/§9.2 |
+| 服务端 P1 与部分能力 | ❌ 桩未注册 / 无实现 | **28 个** `not implemented` 桩中，**27 个**未被覆盖（本版较第二版 32/31 各减 4：images 的 4 个具名桩已被真实实现取代） |
+| 前后端对接 | ⚠️ **6 条客户端调用没有对应路由**（初版 7 条） | 5 条有桩未注册 + 1 条完全无实现；`/ugc/update_cluster_venv` 已闭环；**images 的 4 条调用（`list`/`load`/`delete`/`push_precheck`）已闭环、不在缺口内** |
 | 生产可用性的最大未知数 | ❓ 私有 `custom.py` 是否存在并补齐这些路由 / 是否覆盖新的 env 路由 | 本仓 0 个 `custom.py` |
 
-**一句话结论（d372319）**：客户端与「任务主链路 + workspace + **env 上传**」服务端均已成型，且各自有端到端实测；
-不完整集中在 **① 6 条客户端调用缺服务端路由、② workspace 的 P1（配额/用量/审计）与崩溃恢复正确性（S-2）、
-③ 少量客户端硬 bug（C-3/C-5 等）、④ env 侧精简 M3 的剩余项（权限口径 N1/N2、P99 桶粒度 N8、灰度期版本混用 N9）**。
-初版结论中的「env 上传链路整条缺失」已闭环（见 §7）。
+**一句话结论（`f995cbe`）**：客户端与「任务主链路 + workspace + env 上传 + **images 主入口 `images push`**」服务端均已成型，
+且各自有端到端实测——images 的控制面/运行面/上传通道已实现并 103 实测通过（`e2e_images_push.sh` **`PASS=33 WARN=1 FAIL=0`**），
+**C-3 已闭环**（`images list/load/delete/push` 全部可用）；不完整集中在 **① 6 条客户端调用缺服务端路由、
+② workspace 的 P1（配额/用量/审计）与崩溃恢复正确性（S-2）、③ 少量客户端 bug（C-4/C-5/C-9~C-11）、
+④ env 侧精简 M3 的剩余项（权限口径 N1/N2、P99 桶粒度 N8、灰度期版本混用 N9）、
+⑤ `s3`/RustFS 的 **STS 前缀策略（R-14）** 未收口（环境侧，生产需接 STS/bucket policy）**。
+初版结论中的「env 上传链路整条缺失」已闭环（见 §7）；images 的「上传入口缺失 + 运行面缺脚本」也已闭环（见 §4.2 与
+[images/images-server-test-report.md](images/images-server-test-report.md) §9）。
 
 ---
 
@@ -93,10 +110,10 @@ plugins/haienv/             → hfai env ... / haienv ...（独立 wheel）
 | 项 | 说明 |
 | --- | --- |
 | App | `api/app.py:43` 唯一 FastAPI 实例（中间件、异常改写、Prometheus） |
-| 路由注册点 | `api/register/implement.py` **全部 85 条**，按 `REG_SERVERS` 分组门控（`:23` operating / `:67` ugc / `:97` query / `:140` monitor） |
-| Server group | `operating`(35) · `query`(33) · `ugc`(**15**：workspace 9 + **env 2** + nodeport/train_image 等) · `monitor`(2)；启动项见 `one/supervisord.conf` |
+| 路由注册点 | `api/register/implement.py` **全部 89 条**，按 `REG_SERVERS` 分组门控（`:23` operating / `:67` ugc / `:97` query / `:140` monitor） |
+| Server group | `operating`(35) · `query`(33) · `ugc`(**19**：workspace 9 + env 2 + **train_image 4 条新增**〔`load`/`update_status`/`delete`/`push_precheck`〕+ `train_image/list`、nodeport 等) · `monitor`(2)；启动项见 `one/supervisord.conf` |
 | 旁路宿主 | `uvicorn_server.py:24-31`：`cloud-storage` → `cloud_storage.api:app`（旧无前缀实现，900 行）；`log-forest` → `log_forest_server:app` |
-| 事件钩子 | `api/register/implement.py:91-94` 仅在 ugc 组注册 `startup_recover` / `shutdown_workers` / **`startup_env_check`（env 路径自检，OPS-01）** |
+| 事件钩子 | `api/register/implement.py:91-94` 仅在 ugc 组注册 `startup_recover` / `shutdown_workers` / **`startup_env_check`（env 路径自检，OPS-01）**；本版新增 **`startup_image_check`（`:104`，镜像路径自检，失败只告警）** |
 
 ### 2.3 ⚠️ 必须理解的「三层文件」约定
 
@@ -139,9 +156,10 @@ xxx/
 | `ssh` | `client/commands/hfai_experiment.py:243-258` | ✅ | `POST /query/task/ssh_ip` |
 | `nodes` | `client/commands/hfai_nodes.py:7-13` | ✅ | `POST /query/node/list` |
 | `whoami` | `client/commands/hfai_whoami/implement.py:35-47` | ✅ | `POST /query/user/info` + `quota/list` + `access_token/list` |
-| `images list` | `client/api/image_api.py:6-13` | ✅ | `POST /ugc/user/train_image/list` |
-| `images load` | `client/api/image_api.py:16-25` | ❌ **AttributeError** | 见缺陷 C-3 |
-| `images delete` | `client/api/image_api.py:27-35` | ❌ **AttributeError** | 见缺陷 C-3 |
+| `images list` | `client/api/image_api.py:6-13`（`fetch_images`） | ✅ | `POST /ugc/user/train_image/list` |
+| `images load` | `client/api/image_api.py:48-57`（`load_image_tar`） | ✅（**修 C-3**） | `POST /ugc/user/train_image/load` |
+| `images delete` | `client/api/image_api.py:61-68`（`delete_image_by_name`） | ✅（**修 C-3**） | `POST /ugc/user/train_image/delete` |
+| **`images push`**（本版新增，**主路径**） | `client/commands/hfai_image.py:94-113` → `client/api/image_api.py:175-260`（`push_image_tar`） | ✅（`--image`/`--force`/`--no-load`） | 先 `POST /ugc/user/train_image/push_precheck`（API-19），再复用 `haiworkspace push --file_type image --no_zip`（API-01/05/06），最后 `POST …/load` |
 | `artifact set/get/list/remove/map/unmap/showmapped` | `client/commands/hfai_artifact.py`、`client/api/artifact_api.py` | ✅ | 6 条 artifact 路由均已注册 |
 
 **未注册到 CLI 的死代码**
@@ -219,7 +237,7 @@ xxx/
 | --- | --- | --- | --- |
 | **C-1**（→ 状态见表后） | **`FileType` 枚举字符串化**：`class FileType(str, Enum)`（`conf/utils.py:22-34`）经 f-string 插值产出字面量 `FileType.WORKSPACE`，而非 `workspace` | `workspace_api.py:67,101,184-185,196,217`；`workspace_util.py:127,142,150,161,181,241,277`；`venv_api.py:25` | 服务端 `normalize_enum`（`cloud_storage/service/compat.py:25-53`，默认开）能兜住；`legacy_param_compat=false` 时全部 400 |
 | **C-2**（→ 状态见表后） | **`file_type == FileType.ENV` 比较恒为 False** | `plugins/haiworkspace/haiworkspace/client/workspace_api.py:125` | env 上传分支客户端侧永不命中，打印「不支持的file_type」 |
-| **C-3** | **`hfai images load/delete` 抛 AttributeError**：调用 `user.image.async_load/async_delete`，但客户端 `UserImage` 只有 `async_get` | `client/api/image_api.py:23,34`；`client/model/user_impl/default.py:5-8`；接口 `base_model/base_user_modules/default.py:20-22` | 两个子命令完全不可用 |
+| **C-3** | **`hfai images load/delete` 抛 AttributeError**：调用 `user.image.async_load/async_delete`，但客户端 `UserImage` 只有 `async_get` | **已闭环（`f995cbe`）**：接口层补 `async_load`/`async_delete`/`async_push_precheck`（`base_model/base_user_modules/default.py:21-34`），实现层补三个方法（`client/model/user_impl/default.py:11/21/25`） | 初版两个子命令完全不可用；**本版 103 实测 `images load/delete/push` 全部可用**（[images/images-server-test-report.md](images/images-server-test-report.md) §9.2） |
 | **C-4** | `download` 的 `required=True` 与 `default='checkpoint'` 冲突，`remote_path == ''` 判断永不成立 | `plugins/haiworkspace/haiworkspace/client/command.py:100,115` | 默认值失效，仅提示信息问题 |
 | **C-5** | 未知 provider **静默回退 `MockApi`**（返回空结果但 `success:1`） | `plugins/haiworkspace/haiworkspace/client/workspace_util.py:311-315` | 可能「看起来成功但没上传」 |
 | **C-6** | `hfai python` 的 workspace 自动 push 只在 **external 构建**下存在；内部构建被 `patch_client.py` 裁掉 | `client/commands/hfai_python.py:171`；`client/patch_client.py` | 内部模式需手工 `workspace push` 或手写 workspace URI |
@@ -235,12 +253,13 @@ xxx/
 | --- | --- | --- | --- |
 | C-1 | 枚举字符串化贯穿 | **部分修复**：`workspace_util.enum_value()` 已用于 4 处 URL（`get_sts_token`/`set_sync_status`/`get_sync_status`/`delete_files`），`venv_api.py` 用 `FileType.ENV.value`；**仍有 3 处裸插值** `workspace_util.py:189,249,285`（`list_cluster_files`/`sync_to_cluster`/`sync_from_cluster`），类级隐患未消除（未采用「给 `FileType` 加 `__str__`」的一次性方案） | `f'{FileType.ENV}'` 仍产出 `FileType.ENV`（附录 C 命令 4 可复现）；服务端 `normalize_enum` 继续兜底 |
 | C-2 | `file_type == FileType.ENV` 恒为 False | **已闭环**（env 路径）：客户端现在传字面量 `env`，`'env' == FileType.ENV` 为 True（`str, Enum` 语义）；初版恒 False 的根因是上游传了字符串化的 `FileType.ENV` | `client/api/venv_api.py:112`、`plugins/haiworkspace/.../command.py:48`（CLI 默认值本就是字符串 `'workspace'`） |
+| **C-3** | `hfai images load/delete` 抛 AttributeError | **已闭环（`f995cbe`）**：接口层 `IUserImage` 现为 **4 个方法**（既有 `async_get` + 新增 `async_load`/`async_delete`/`async_push_precheck`），实现层补齐对应实现；`client/api/image_api.py:26` 的 `_ensure_success` 把服务端业务失败打印为可读 `msg` 且退出码 1（不再抛裸异常栈，修 I10） | `base_model/base_user_modules/default.py:21-34`、`client/model/user_impl/default.py:11/21/25`、`client/api/image_api.py:26,48,61`；103 实测见 [images/images-server-test-report.md](images/images-server-test-report.md) §9.2 |
 | C-7 | `haienv create` 硬编码 CUDA 11.1/11.3、交互确认、`__IS_HF_ENV__` 未替换 | **部分修复**：CUDA 门禁改为「功能探测 + 告警」（`HAIENV_CUDA_STRICT=1` 可恢复严格）；`__IS_HF_ENV__`/conda 前置仍是既有约束（`create` 需本机 conda） | `plugins/haienv/haienv/client/command.py:57-137`；`tests/env/test_haienv_create_prereq.py`（27 条） |
 | C-8 | `push_venv` 三重失败链（`sys.argv[0]` 拼错子命令 / `--file_type` 字面量 / 目标路由未注册且 `path` 无防御） | **已闭环**：① 显式解析 `haiworkspace` 可执行文件（含主 CLI/插件两种装配）② 传 `--file_type env` ③ 两条路由已注册并实现 + `path`/`cloud_path` 缺失即明确失败且不上传 | `client/api/venv_api.py:29-56,95-133,177-201`；`tests/env/test_client_push.py`（14 条）；103 实测见 §7 |
 | （新增）C-6′ | 集群外 push 用集群文件系统路径当对象 key → 任务侧 404 | **已修复**：API-11 返回 `cloud_path`，客户端以其为 `--env_remote_path` | `cloud_storage/service/env_registry.py:283-302`、`client/api/venv_api.py:192-201` |
 | （新增）C-7′ | ENV 上传排除了 `activate` → 任务内 `source haienv` 报 `No such file or directory` | **已修复**：ENV 分支 `exclude_list = []` | `plugins/haiworkspace/haiworkspace/client/workspace_api.py:125-131` |
 
-> 与初版一致、本次未复核的项：C-3、C-4、C-5、C-6、C-9、C-10、C-11。
+> 与初版一致、本次未复核的项：C-4、C-5、C-6、C-9、C-10、C-11（**C-3 已闭环**；C-1/C-7/C-8 见表内状态）。
 
 ---
 
@@ -252,12 +271,13 @@ xxx/
 | --- | --- | --- | --- |
 | `operating` | 35 | `api/register/implement.py:23` | 任务生命周期、用户/配额/权限管理、节点/挂载点运维 |
 | `query` | 33 | `:97` | 任务/用户/集群/存储查询 |
-| `ugc` | **15** | `:67` | nodeport、train_image、**workspace 9 条** + **env 2 条**（API-11/API-13） |
+| `ugc` | **19** | `:67` | nodeport、**workspace 9 条** + **env 2 条**（API-11/API-13） + **images/train_image 4 条**（`load` `:75` / `update_status` `:76` / `delete` `:77` / `push_precheck` `:79`；`list` 早已存在 `:72`） |
 | `monitor` | 2 | `:140` | 性能时序、用户存储 |
 | （不分组） | 3 | `api/app.py:280,283` + 条件 `/swagger/*` | metrics / 健康检查 / swagger |
 
-**AST 级核对结果**：85 条注册引用的处理函数**全部存在**，无 `ImportError`/`AttributeError` 型空注册；**没有任何已注册路由指向 `not implemented` 桩**。
-（初版 83 条 → 本版 85 条：`/ugc/update_cluster_venv`、`/ugc/register_cluster_venv` 由 `9de1536` 新增。）
+**AST 级核对结果**：89 条注册引用的处理函数**全部存在**，无 `ImportError`/`AttributeError` 型空注册；**没有任何已注册路由指向 `not implemented` 桩**。
+（初版 83 条 → 第二版 85 条：`/ugc/update_cluster_venv`、`/ugc/register_cluster_venv` 由 `9de1536` 新增；
+**本版 89 条**：`f995cbe` 新增 images 的 4 条 `/ugc/user/train_image/{load,update_status,delete,push_precheck}`，`list` 路由早已存在。）
 
 ### 4.2 已完整实现（本仓真实逻辑）
 
@@ -274,18 +294,33 @@ xxx/
 | env 路径单点与开关 | 5 个纯函数（`get_env_path/get_env_root/get_user_env_dir/get_env_registry_path/get_env_dir_name`）+ `env_push_enabled*` / `env_name_regex` | `conf/utils.py:411-479`、`cloud_storage/service/context.py:144-203`、`one/one_etc/core.toml:113-117` |
 | **env `/ugc/*` 2 条** | `POST /ugc/update_cluster_venv`（名称白名单 / 路径推导 / 写权限探测 / 返回 `cloud_path`+`haienv_version`）、`POST /ugc/register_cluster_venv`（`flock` + `REPLACE` 写 `venv.db` 的 `haienv` 表 + 回读校验 + 目录可见性轮询） | `api/resource/storage/default.py:52-138` → `cloud_storage/service/env_registry.py`（283 语句，行覆盖 93%） |
 | env 启动自检 | `env_registry_self_check()`：校验 `env_root` 与 `get_base_path(FileType.ENV)` 同源，并打印 `haienv_version`；失败只告警不阻断 | `cloud_storage/service/env_registry.py:500-536`、`api/register/implement.py:94` |
+| **images 控制面 `/ugc/*` 4 条**（本版） | API-15 `load`（校验 + 登记；`register` 后端只登记，真正 import 推迟到 pod initContainer）、API-16 `update_status`（数据面回报）、API-18 `delete`（**不回收存储**）、API-19 `push_precheck`（落点/幂等/容量上限）；API-17 `list` 早已存在 | `api/resource/image/default.py:48,85,126,145`、`api/register/implement.py:75-79`、`api/query/optimized/resource.py`（`list`） |
+| images 领域层与数据面 | `UserImage` 4 方法 + 状态常量单点；`TrainImageSelector` 幂等 upsert / `updated_at DESC` / 出口归一化 / 软删；`train_image` 列表配置 | `server_model/user_impl/user_image/{default,implement}.py`、`server_model/selector/train_image_selector.py`、`server_model/user_data/table_config.py` |
+| images 路径与开关单点 | `FileType.IMAGE`、`get_image_root()`、`IMAGE_NAME_RE`、`derive_image_name()`（**不自动补 tag**）；IMAGE 的 cluster/cloud 双路径；上传开关（`enabled` / `upload_enabled` / `max_tar_bytes` / `upload_require_precheck`） | `conf/utils.py:31,492-550`、`cloud_storage/utils.py:478`（cluster `{image_path}/{name}`、cloud `{group}/shared/images/{user}/{name}`）、`cloud_storage/service/context.py:367,372,384,393,411` |
+| **images 上传通道（复用 workspace 的三条接口）** | API-01 签发 STS（IMAGE 与 API-05 **共用同一个上传闸门**）、API-05 `sync_to_cluster`（白名单放行 `image` + **强制 `no_zip`**）、API-06 轮询状态；`upload_require_precheck` 用短 TTL 标记；另有 `IMAGE_TAR_TOO_LARGE` 与 4 个指标 | `cloud_storage/service/sts.py:32-36`、`sync_to_cluster.py:54-71`、`status.py:91-102`、`errors.py:38`、`image_metrics.py` |
+| images 运行面（任务 pod 真正用上镜像） | 新增 `link_hfai_image.sh`（initContainer 内用宿主 loader/glibc 显式跑 `ctr images import`）；helper 镜像与 `/data_local` 可配置、**仅 initContainer** 挂 socket/ctr/glibc/镜像根；放行长 init（修 I19）；`storage` 挂载种子登记 | `marsv2/scripts/link_hfai_image.sh`、`experiment_manager/manager/init_manager.py`、`experiment_manager/manager/check_unschedulable.py`、`one/hai-up.sh`、`one/one_etc/core.toml` |
+| images 迁移 | `035`（加 `message`/`user_name` 列 + 唯一键改 `(shared_group, image_tar)`）、`036`（**幂等**给 PG `file_type` 枚举加 `image`） | `db_schemas/035.table_train_image_alter.sql`、`db_schemas/036.file_type_enum_add_image.sql` |
+| images 客户端 | `images push`（主路径，`--image`/`--force`/`--no-load`，恒 `no_zip`）+ `images load --image/--force` + 失败面打印服务端 `msg`；`IUserImage` 补 4 方法 | `client/commands/hfai_image.py:94,116`、`client/api/image_api.py:26,48,61,117,160,175`、`client/model/user_impl/default.py:11,21,25`、`base_model/base_user_modules/default.py:21-34`、`plugins/haiworkspace/haiworkspace/client/workspace_api.py`（`file_type=IMAGE` 分支）、`plugins/haiworkspace/haiworkspace/client/command.py`（三个隐藏 `--image_*`） |
+| images 测试与验证脚本 | L1（P0 单测 / UP 组 / 客户端两条）+ L2/L3 冒烟与 E2E + 上传闭环 E2E | `tests/images/{test_image_domain,test_image_push,test_image_push_client}.py`、`docs/haiplatform/scripts/{probe_images.sh,patch_image_override.py,image_fixture.sh,check_images_preflight.sh,smoke_images.sh,e2e_images.sh,e2e_images_push.sh}` |
+| **images 实测结论**（2026-10-02，`f995cbe`） | preflight `PASS=30 FAIL=0`；L1 镜像内 `43 passed, 2 skipped` + host 客户端 `2 passed`；L2 `PASS=44 FAIL=0`；L3 `PASS=26 FAIL=0`；**上传通道 `e2e_images_push.sh` `PASS=33 WARN=1 FAIL=0`**；workspace/env 回归 `8/0`、`19/0`、`20/0`、`16/0` | [images/images-server-test-report.md](images/images-server-test-report.md) §9.1/§9.2 |
 
 ### 4.3 未实现 / 桩（按可达性分类）
 
-全仓 `default.py` 中返回 `'not implemented'` 的函数共 **32 个**（初版 33 个：`update_cluster_venv` 的桩已随 env 实现移除），其中**仅 1 个**（`task_sys_log_api`）被 `implement.py` 同名覆盖。其余 **31 个**按可达性分为三类：
+全仓 `default.py` 中返回 `'not implemented'` 的函数共 **28 个**（初版 33 → 第二版 32：`update_cluster_venv` 的桩随 env 实现移除；
+**本版 32 → 28**：`api/resource/image/default.py` 的 4 个 `hfai_image_load/update_status/list/delete` 具名桩已被**真实实现**取代），
+其中**仅 1 个**（`task_sys_log_api`）被 `implement.py` 同名覆盖。其余 **27 个**按可达性分为三类：
 
 | 类别 | 函数（所在文件） | 客户端是否调用 | 是否有路由 |
 | --- | --- | --- | --- |
 | **A. 客户端会调用但未注册**（→ 见 §5） | `swap_memory`(`api/task/swap/default.py:3`)、`haiprof_task`(`api/task/experiment/default.py:24`)、`validate_task`(`:10`)、`validate_nodes`(`:17`)、`task_container_log_api`(`:46`) —— 共 5 个（**初版 6 个**：`update_cluster_venv` 已实现并注册，见 §4.2） | ✅ | ❌ |
-| **B. 无任何入口（死桩 / 私有扩展点）** | `create_task`(`api/task/experiment/default.py:3`，已被 `create_task_v2` 取代)、`create_task_base_queue`、`switch_schedule_zone`、`checkpoint_api`、`syslog_api`、`hfai_image_load/update_status/list/delete`(4)、`clone_dataset*`(3)、`get_user_monitor_info`、`get_user_weka_usage`、`get_external_user_storage_usage`、`handle_user_usage_exceed`、external-user API(6)、`get_user_community_info`、`get_task_distribute_api`、`set_external_user_cloud_storage_quota` —— 共 25 个 | ❌ | ❌ |
+| **B. 无任何入口（死桩 / 私有扩展点）** | `create_task`(`api/task/experiment/default.py:3`，已被 `create_task_v2` 取代)、`create_task_base_queue`、`switch_schedule_zone`、`checkpoint_api`、`syslog_api`、`clone_dataset*`(3)、`get_user_monitor_info`、`get_user_weka_usage`、`get_external_user_storage_usage`、`handle_user_usage_exceed`、external-user API(6)、`get_user_community_info`、`get_task_distribute_api`、`set_external_user_cloud_storage_quota` —— 共 **21** 个（第二版 25 个：去掉已被真实实现取代的 `hfai_image_load/update_status/list/delete` 4 个） | ❌ | ❌ |
 | **C. 审计子系统** | `run_audit`(`cloud_storage/audit/default.py:10`) —— 共 1 个 | ❌ | ❌ |
 
 > 类别 B 的桩多数是**有意留出的私有覆盖接缝**（见 §2.3 含义 B），不应一律视为缺陷；但 `checkpoint_api`、`syslog_api`、`get_task_distribute_api` 等连前端入口都没有，属真正的死代码。
+> **本版新增说明**：`api/resource/image/default.py` 现在**只剩真实实现**（4 个 `hfai_image_*` 具名桩被 `implement.py`/`default.py` 的真实逻辑取代），
+> 并且**新增**了 `hfai_image_push_precheck`（API-19）—— 注意它是**新增函数**，不是「桩被覆盖」，不计入桩统计；`hfai_image_list`（`:114`）保留函数名但已是真实查询（P2 独立列表端点预留）。
+> 因此类别 B 由第二版的 25 个降为 **21** 个。
+>
 > **`api/resource/storage/default.py` 的 `update_cluster_venv` 桩已被真实实现取代**（该文件现在仍返回 `not implemented` 的只剩 `get_user_weka_usage`、`get_external_user_storage_usage`，属类别 B）。
 > workspace 的 P1 需求（API-10 配额 / **API-11 env 上传（已实现）** / API-12 用量）中，env 上传已闭环，配额与用量仍落在 A、B 两类。
 
@@ -296,7 +331,7 @@ xxx/
 | provider | 状态 | 证据 |
 | --- | --- | --- |
 | `oss` | ✅ 完整（AssumeRole + 前缀策略） | `cloud_storage/provider/oss.py` |
-| `s3` / `rustfs` | ⚠️ 可用但**安全降级**：`get_access_token` 下发**静态 AK/SK、不限制 prefix** | `cloud_storage/provider/s3.py:276-293` |
+| `s3` / `rustfs` | ⚠️ 可用但**安全降级**：`get_access_token` 下发**静态 AK/SK（`security_token` 为空）、不限制 prefix** | `cloud_storage/provider/s3.py:276-293`；**本版实测（images 上传通道，R-14）**：API-01 返回的 `authorized_path` 恰为本用户镜像前缀，但用同一凭证写 `hfai/shared/images/other-user/evil.txt` 返回 **`ALLOWED`**（越权前缀未被拒）→ **生产必须接 RustFS STS（AssumeRole + inline policy）或 bucket policy**（**待收口**，见 §6.3 #3 / §8 / §9） |
 | `mock` | 桩，全部返回空；`get_access_token` 返回 `{}` | `cloud_storage/provider/mock.py` |
 | `localfs` | ❌ **文件不存在**（设计 ADR-8 要求） | `cloud_storage/service/context.py:168-170` 显式报错 |
 
@@ -319,7 +354,7 @@ xxx/
 | **S-10** | 低 | `api/app.py:51` 引用的 `api/openapi_specification/user_api.yaml` **在本仓不存在**（swagger 文档加载可能失败） | `api/app.py:46-58` |
 | **S-11** | 低 | 其余：`api/register/default.py:12` 直接 `os.environ['SERVER']`（未设置即 `KeyError`）；`post_process_cluster_df` 为恒等函数；`check_sidecar_get_err` 恒返回 `None`；`query/task/container_monitor_stats/list` 的 try-import 失败会 NameError；关机时进程池 `shutdown()` 无 `cancel_futures` 会阻塞 | `api/register/default.py:11-12`；`api/resource/cluster/default.py:2-3`；`api/operation/default.py:34-35`；`api/query/optimized/task/implement.py:18-21,361`；`cloud_storage/utils.py:88-94` |
 
-**两条与本次更新相关的补充（其余 S-x 沿用初版判定）**
+**三条与本次更新相关的补充（其余 S-x 沿用初版判定）**
 
 - **S-1（env 侧不命中裸 500，但全局兜底仍缺）**：两条新接口在 `except Exception` 分支把异常包成 `WorkspaceError`
   返回带 `success` 的 JSON（`api/resource/storage/default.py:68-77,107-118`），因此 env 链路不会返回裸 500 文本；
@@ -329,12 +364,17 @@ xxx/
   `docs/haiplatform/scripts/env_rollback_drill.sh` 实测「关停 → 三条写入路径全部 `FEATURE_DISABLED`」；
   初版指出的 workspace 侧 4 条接口（`get_sts_token`/`set_sync_status`/`get_sync_status`/`cluster_files/list`）
   仍可绕过 `enabled/enabled_users/enabled_groups`。
+- **S-7 补充（images 侧也已做到「控制面与数据面共用同一个开关」）**：images 上传通道按 env 的 **N4 教训**实现 ——
+  `check_image_upload_enabled` 同时作用于 **API-01（签发凭证）** 与 **API-05（提交落盘）**
+  （`cloud_storage/service/sts.py:32-36`、`sync_to_cluster.py:54-71`），并另设**独立**的 `upload_enabled` 开关；
+  `e2e_images_push.sh` 实测：`upload_enabled=false` 时 API-01/API-05 同时 `FEATURE_DISABLED`、共享盘**零新增写入**、
+  控制面 `list` 不受影响、恢复后可用（[images/images-server-test-report.md](images/images-server-test-report.md) §9.2）。
 
 ---
 
 ## 5. 客户端调用 ↔ 服务端注册 缺口矩阵
 
-对客户端全部 `mars_url()/...` 调用点与 `api/register/implement.py` 注册表做程序化差集，**6 条客户端调用在本仓没有路由**（`d372319` 重跑附录 C 命令 2：输出 8 条，其中 `/monitor_v2/*` 2 条属独立监控服务、不在本仓；初版 7 条中的 `/ugc/update_cluster_venv` 已闭环）：
+对客户端全部 `mars_url()/...` 调用点与 `api/register/implement.py` 注册表做程序化差集，**6 条客户端调用在本仓没有路由**（`f995cbe` 重跑附录 C 命令 2：输出仍 8 条，其中 `/monitor_v2/*` 2 条属独立监控服务、不在本仓；初版 7 条中的 `/ugc/update_cluster_venv` 已闭环；**images 的 3 条调用〔`list`/`load`/`delete`〕已闭环、不在缺口内**）：
 
 | # | 客户端调用点 | 服务端现状 | 用户可见后果 |
 | --- | --- | --- | --- |
@@ -348,7 +388,8 @@ xxx/
 
 > **保留意见**：第 2–6 条**可能由生产环境的私有 `api/register/custom.py` 补注册**（本仓 `custom.py` 数量为 0，无法验证）。第 1 条 `rerun_task` 连桩都没有，私有实现也只能从零写。
 >
-> **反向观察**：注册表中另有 **41 条路由客户端从不调用**（如 `task/share`、`task/resume`、`task/fail`、`user/create`、`node/host_info/*`、`service_task/*`、`training_quota/list_all` 等），它们是**前端 Hub / 管理工具 / 私有代码**的接口——这属于正常分工，不是缺陷。（`d372319` 重跑仍为 41 条——新增的 2 条 env 路由由客户端 `venv_api.py` 调用，不在其中。）
+> **反向观察**：注册表中另有 **42 条路由客户端从不调用**（如 `task/share`、`task/resume`、`task/fail`、`user/create`、`node/host_info/*`、`service_task/*`、`training_quota/list_all` 等），它们是**前端 Hub / 管理工具 / 私有代码**的接口——这属于正常分工，不是缺陷。
+> （第二版 41 条 → 本版 **42** 条：新增的 1 条是 **`/ugc/user/train_image/update_status`**——它由**服务端数据面**回报镜像状态，客户端不调用；新增的另 3 条 images 路由由客户端 `image_api.py` 调用，不在其中。`d372319` 的 41 条口径见第二版。）
 
 ---
 
@@ -384,7 +425,7 @@ xxx/
 
 1. **任务容器内运行未验证** —— `oss://` 解析、提交期校验、挂载项生成均通过，但 pod 内 `cd {workspace}` 执行用户脚本的最终确认尚未完成；
 2. **平台自带客户端的 workspace 自动联动不可用** —— 内部模式客户端经 `patch_client.py` 裁掉了 `client/commands/hfai_python.py:171` 的 external 分支，需手工 push 或手写 workspace URI；
-3. **STS 最小权限降级** —— `s3`/RustFS 无 STS 角色扮演，下发静态 AK/SK，SEC-02 的「最小权限前缀」未实现；
+3. **STS 最小权限降级** —— `s3`/RustFS 无 STS 角色扮演，下发静态 AK/SK，SEC-02 的「最小权限前缀」未实现；**本版实测（images 上传通道，R-14）**：用同一凭证写他人前缀返回 `ALLOWED`（越权前缀未被拒）→ **仍未收口**，生产必须接 RustFS STS（AssumeRole + inline policy）或 bucket policy；`workspace`/`env` 上传是同一限制；
 4. **registry 推送无凭据** —— 部署走本机 import 到 containerd 的旁路；
 5. **宿主机上存在未收编的 rustfs 实例**（端口 9000，默认凭据）—— 与环境内 19000 端口的容器并存，建议尽快停用；
 6. **P1 未实现** —— FR-17/18/21、API-10/11/12；其中 **API-11（`/ugc/update_cluster_venv`，env 上传）已由 env 特性闭环**（见 §7），
@@ -434,11 +475,14 @@ xxx/
 
 | 优先级 | ID | 侧 | 事项 | 证据 | 影响面 |
 | --- | --- | --- | --- | --- | --- |
-| **P0** | C-3 | 客户端 | `images load/delete` 抛 AttributeError | `client/api/image_api.py:23,34` | 2 个子命令完全不可用 |
+| ~~**P0**~~ **已闭环** | ~~C-3~~ | 客户端 | ~~`images load/delete` 抛 AttributeError~~ —— **已完成（`f995cbe`）**：`IUserImage` 补 4 个方法（既有 `async_get` + 3 个新增）+ `client/model/user_impl/default.py` 实现；103 实测 `images load/delete/push` 全部可用 | `base_model/base_user_modules/default.py:21-34`、`client/model/user_impl/default.py:11/21/25`；[images/images-server-test-report.md](images/images-server-test-report.md) §9.2 | 2 个子命令已可用（不再是缺口） |
 | **P0** | S-1 | 服务端 | 缺通用 `Exception` 处理器，异常返回裸 500 无 `success` | `api/app.py:211-256` | 破坏客户端全局契约 |
 | **P0** | S-2 | 服务端 | 崩溃恢复 5 项正确性问题 | `cloud_storage/service/recovery.py` 等 | 生产每次重启必踩 |
 | **P0** | §5#1 | 服务端 | `/operating/rerun_task` 完全无实现 | `client/api/experiment_api.py:87` | 重跑任务不可用 |
 | **P1** | C-1 | 客户端 | `FileType` 枚举字符串化**部分修复**：4 处 URL 已走 `enum_value()`，`workspace_util.py:189,249,285` 仍裸插值 | `conf/utils.py:22-34`、`workspace_util.py:121-126` | 依赖服务端兼容层兜底（**C-2 已闭环**，见 §3.4 状态） |
+| **P1** | R-14 | 服务端 + 环境 | **SEC-08 前缀强制未落地**：RustFS 走 P0 降级实现，下发静态 AK/SK、`security_token` 为空，越权前缀写入实测 `ALLOWED`（`workspace`/`env` 上传同一限制） | `cloud_storage/provider/s3.py:276-293`；[images/images-server-test-report.md](images/images-server-test-report.md) §7.4/§9.2 | 多租户生产必须接 RustFS STS（AssumeRole + inline policy）或 bucket policy |
+| **P2** | FI-09~FI-11 | 服务端 + 测试 | images 上传通道的故障注入未做：stage2 中断/续传、RustFS 不可达、共享盘只读/写满；AC-17 的「中断后续传」腿同此 | [images/images-server-test-report.md](images/images-server-test-report.md) §9.3 | 失败面的可诊断性/续传能力未全量验证 |
+| **P2** | PERF-01/02 | 服务端 | images 上传的 PERF 基线未做（目前只记录 1 GB tar 全链路约 3~4 分钟可完成） | [images/images-server-test-report.md](images/images-server-test-report.md) §9.3 | 容量规划缺数据 |
 | **P1** | §5#2-6 | 服务端 | 5 条客户端调用只有桩、未注册 | 见 §5 表 | 5 个功能 404（除非私有层补齐） |
 | ~~P1~~ | §7 | 双端 | ~~env 上传链路整体缺失 + 路径约定不一致~~ **已闭环（`9de1536` + `9f9e86b`）** | 见 §7 | 跨端 env 已可用；剩余 N1/N2/N8/N9 见下一行 |
 | **P1** | N1 / N2 | 服务端 + 客户端 | env 权限口径：客户端把用户 env 目录 `chmod 777`，`venv.db` 在共享盘上同组可写，而读取端会 `pickle.loads` | [env/env-server-test-report.md](env/env-server-test-report.md) §9.2 | 安全（内部环境暂以同组互信为前提，上生产前需裁决） |
@@ -461,13 +505,13 @@ xxx/
 
 ## 9. 建议的收口顺序
 
-1. **修客户端硬 bug（成本最低）**：C-3（补 `async_load/async_delete` 或下线命令）、C-1 剩余 3 处裸插值（`workspace_util.py:189,249,285`，或给 `FileType` 加 `__str__ = str.__str__` 一次性解决）。~~C-2~~ 已闭环。
+1. **修客户端硬 bug（成本最低）**：~~C-3（补 `async_load/async_delete` 或下线命令）~~ **已完成（`f995cbe`）**；C-1 剩余 3 处裸插值（`workspace_util.py:189,249,285`，或给 `FileType` 加 `__str__ = str.__str__` 一次性解决）。~~C-2~~ 已闭环。
 2. **给 6 条缺失路由一个明确态度**（初版 7 条，`update_cluster_venv` 已闭环）：要么在开源层注册并实现（至少 `rerun_task`），要么在 `api/register/implement.py` 里显式声明「由私有 `custom.py` 提供」，避免使用者误以为功能存在。
 3. **加通用 `Exception` 处理器**（S-1），保证任何路径都返回带 `success` 的 JSON。
 4. **修崩溃恢复**（S-2 的 5 个子项）——这是生产重启后必然暴露的问题。
 5. ~~**env 链路**：按设计补 `env push` + `env_root` 路径对齐 + `venv.db` 注册~~ —— **已完成**（`9de1536`，103 实测见 §7）；后续按 [env/env-server-test-report.md](env/env-server-test-report.md) §9.2 的 N1–N9 台账收口剩余项
    （优先 N1/N2 权限裁决，其次 N8 指标桶粒度与 N9 灰度期版本纪律）。
-6. **安全收口**：SQL 参数化（S-3）、`security_check` 落地（S-4）、`s3` provider 的 STS/前缀策略（§6.3 #3）。
+6. **安全收口**：SQL 参数化（S-3）、`security_check` 落地（S-4）、`s3` provider 的 STS/前缀策略（§6.3 #3）——**本版实测 R-14：越权前缀写入 `ALLOWED`，这是当前唯一未收口的「环境侧」安全项**（代码侧无法修，需生产接 RustFS STS 或 bucket policy）。
 7. **文档对齐**：删除或标注 `docs/_sources/cli/cluster.rst.txt` 中不存在的 4 个命令。
 8. **收口 env 的 Checklist**：[env/env-server-checklist.md](env/env-server-checklist.md) 目前 74/133 已勾，未勾项按各聚合项的「M3 核查」备注逐条补测即可（PERF/REL/POST/ACC 属真上线阶段）。
 
@@ -494,6 +538,15 @@ xxx/
 | env 服务端接入层 | `api/resource/storage/default.py:52-138`（API-11 / API-13 / `startup_env_check`） |
 | env 开关与指标 | `cloud_storage/service/context.py:144-203`、`cloud_storage/metrics.py:48-76` |
 | env 验证脚本 | `docs/haiplatform/scripts/{verify_env,smoke_env,e2e_env,env_rollback_drill,check_env_idempotent,env_metrics}.sh`、`env_alerts.yml` |
+| images 服务端接入层 | `api/resource/image/default.py:48,85,126,145`（`load`/`update_status`/`delete`/`push_precheck`；`:114` 的 `list` 为 P2 预留、`:228 startup_image_check`）、`api/register/implement.py:75-79,104` |
+| images 领域层与 selector | `server_model/user_impl/user_image/{default,implement}.py`、`server_model/selector/train_image_selector.py`、`server_model/user_data/table_config.py` |
+| images 路径与开关单点 | `conf/utils.py:31,492-550`、`cloud_storage/utils.py:478`、`cloud_storage/service/context.py:367,372,384,393,411` |
+| images 上传通道（复用三条接口 + 强制 `no_zip` + 开关同源） | `cloud_storage/service/sts.py:32-36`、`sync_to_cluster.py:54-71`、`status.py:91-102`、`errors.py:38`、`image_metrics.py` |
+| images 运行面（link 脚本 + initContainer + 放行长 init） | `marsv2/scripts/link_hfai_image.sh`、`experiment_manager/manager/init_manager.py`、`experiment_manager/manager/check_unschedulable.py`、`one/hai-up.sh`、`one/one_etc/core.toml` |
+| images 迁移 | `db_schemas/035.table_train_image_alter.sql`、`db_schemas/036.file_type_enum_add_image.sql` |
+| images 客户端实现（`push` 主路径 + 修 C-3） | `client/commands/hfai_image.py:94,116`、`client/api/image_api.py:26,48,61,117,160,175`、`client/model/user_impl/default.py:11,21,25`、`base_model/base_user_modules/default.py:21-34`、`plugins/haiworkspace/haiworkspace/client/workspace_api.py`、`plugins/haiworkspace/haiworkspace/client/command.py` |
+| images 测试与验证脚本 | `tests/images/{test_image_domain,test_image_push,test_image_push_client}.py`、`docs/haiplatform/scripts/{probe_images.sh,patch_image_override.py,image_fixture.sh,check_images_preflight.sh,smoke_images.sh,e2e_images.sh,e2e_images_push.sh}` |
+| images 实现与 103 实测记录 | [images/images-server-test-report.md](images/images-server-test-report.md)（§9.1 S9-2 重跑、§9.2 上传闭环 `PASS=33 WARN=1 FAIL=0`、§6 缺陷 D10/D11/D13） |
 | haienv 本地实现 | `plugins/haienv/haienv/client/{api,command,model,script,sqlite_dict}.py`、`plugins/haienv/haienv/haienv` |
 | workspace 客户端实现 | `plugins/haiworkspace/haiworkspace/client/{cli,command,workspace_api,workspace_util}.py` |
 | 服务端异常处理器 | `api/app.py:211-256` |
@@ -524,7 +577,8 @@ from collections import Counter
 s = open('api/register/implement.py').read()
 r = re.findall(r"app\.(post|get)\('([^']+)'\)", s)
 print('routes:', len(r), Counter(p.split('/')[1] for m, p in r))
-# d372319 实测：routes: 85 Counter({'operating': 35, 'query': 33, 'ugc': 15, 'monitor': 2})
+# 第二版 d372319 实测：routes: 85 Counter({'operating': 35, 'query': 33, 'ugc': 15, 'monitor': 2})
+# f995cbe 实测：routes: 89 Counter({'operating': 35, 'query': 33, 'ugc': 19, 'monitor': 2})
 PY
 
 # 2) 客户端调用 vs 服务端注册 差集
@@ -537,11 +591,14 @@ for p in glob.glob('client/**/*.py', recursive=True) + glob.glob('plugins/**/*.p
         called.add(m.group(1).rstrip('?'))
 norm = lambda p: re.sub(r'\{[^}]*\}', '{}', p)
 print(sorted(p for p in called if norm(p) not in {norm(x) for x in reg}))
-# d372319 实测：8 条，其中 /monitor_v2/* 2 条属独立监控服务 → 本仓缺口 = 6 条
+# 第二版 d372319 实测：8 条，其中 /monitor_v2/* 2 条属独立监控服务 → 本仓缺口 = 6 条
+# 第三版 f995cbe 实测：8 条（同上）→ 本仓缺口 = 6 条；已注册但客户端不调用 42 条
+#   （第二版 41 条；新增的 1 条是 /ugc/user/train_image/update_status，由服务端数据面回报，客户端不调用）
 PY
 
 # 3) 找出所有 not implemented 桩
 grep -rn "not implemented" --include="*.py" api/ cloud_storage/ | grep -v __pycache__
+# f995cbe 实测：28 个（第二版 32、初版 33；images 的 4 个 hfai_image_* 具名桩已被真实实现取代，见 §4.3）
 
 # 4) 枚举字符串化实测（Python 3.11+ 同样成立）
 python3 -c "
@@ -549,16 +606,29 @@ from enum import Enum
 class FileType(str, Enum): ENV='env'
 print(f'{FileType.ENV}', 'FileType.ENV' == FileType.ENV)"
 # d372319 实测：FileType.ENV False   → 类级隐患仍在（见 §3.4 C-1）
+# 第三版 f995cbe 复跑结论不变（C-1 仍未彻底修）
 
 # 5) env 链路一键验证（在 host 103 上执行，需已部署含 env 实现的镜像/服务端）
 bash docs/haiplatform/scripts/verify_env.sh      # 期望 PASS=8 FAIL=0
+
+# 6) images 链路一键验证（在 host 103 上执行，需已部署含 images 实现的服务端 + 已安装本分支客户端）
+bash docs/haiplatform/scripts/check_images_preflight.sh   # 期望 PASS=30 FAIL=0
+bash docs/haiplatform/scripts/smoke_images.sh http://10.205.52.200        # 期望 PASS=44 FAIL=0
+E2E_PURGE_IMAGE=1 bash docs/haiplatform/scripts/e2e_images.sh http://10.205.52.200   # 期望 PASS=26 FAIL=0
+bash docs/haiplatform/scripts/e2e_images_push.sh   # 期望 PASS=33 WARN=1 FAIL=0（WARN = 本环境静态 AK/SK 不强制 prefix，见 R-14）
 ```
 
-> 命令 1/2/4 的输出在本版（`d372319`）已重跑核对；命令 3 的桩数量为 32（初版 33）。
+> 命令 1/2/3/4 的输出在第三版（`f995cbe`）已重跑核对：路由 **89**（operating 35 / query 33 / ugc 19 / monitor 2）、
+> 本仓缺口 **6 条（另 2 条属独立监控服务）**、桩 **28 个**、枚举字符串化结论不变。（第二版口径：85 / 6+2 / 32。）
 
 ---
 
 *本文档由代码审计生成，审计过程未修改任何源文件；引用仓库内既有实测结论处已标注出处。*
 
-*更新记录：初版基线 `b866c10`（2026-10-02）；本版基线 `d372319`（2026-10-02），重跑了附录 C 的
-路由/差集/桩统计并同步了 env 特性的实现与实测结论（§3.3/§3.4/§4.1~§4.3/§4.5/§5/§7/§8/§9/附录）。*
+*更新记录：*
+- *初版基线 `b866c10`（2026-10-02）。*
+- *第二版基线 `d372319`（2026-10-02）：重跑了附录 C 的路由/差集/桩统计，并同步 env 特性的实现与实测结论
+  （§3.3/§3.4/§4.1~§4.3/§4.5/§5/§7/§8/§9/附录）。*
+- *第三版基线 `f995cbe`（2026-10-02，分支 `feature/hai-cli-images-rustfs-design`）：更新 images 特性
+  （控制面 + 运行面 + 上传通道）的实现与 103 实测结论，重跑附录 C 命令 1/2/3
+  （§0/§2.2/§3.1/§3.4/§4.1~§4.5/§5/§6.3/§8/§9/附录 A/附录 C）。*

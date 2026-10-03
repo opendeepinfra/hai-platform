@@ -35,10 +35,11 @@ die()  { err "$*"; exit 1; }
 : "${NODE_GPUS:=1}"
 : "${HAS_RDMA_HCA_RESOURCE:=0}"
 : "${INGRESS_CLASS:=nginx}"
-: "${INGRESS_HOST:=192.168.100.150}"
+: "${INGRESS_HOST:=hai-platform-svc.hai-platform.svc.cluster.local}"
 : "${HAI_SERVER_ADDR:=192.168.100.150}"
 : "${METALLB_VERSION:=v0.14.9}"
 : "${METALLB_IP_RANGE:=192.168.100.150/32}"
+: "${METALLB_INTERFACE:=enp9s0}"   # LAN 网卡（103 上还有 enp8s0/IB/ZeroTier/docker，必须钉住）
 : "${PLATFORM_IMAGE:=registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:f2cb559}"
 : "${BASE_IMAGE:=${PLATFORM_IMAGE}}"
 : "${TRAIN_IMAGE:=${PLATFORM_IMAGE}}"
@@ -75,6 +76,30 @@ wait_pod_running() {
     sleep 10
   done
   echo "${phase:-<none>}"
+  return 1
+}
+
+# 等待某个 Pod 进入 Running **且 Ready**，可选要求 UID 与 $4 不同。
+#
+# 为什么需要：StatefulSet 是 OrderedReady，删掉旧 Pod 后新 Pod 要等旧 Pod 完全
+# 终止才创建，而旧 Pod 在终止期间 phase 仍是 Running。只判 phase 会让调用方
+# 对着**旧 Pod**做验收（实测踩过：平台页面的 bffURL 还是改前的值）。
+wait_pod_ready() {
+  local ns="$1" pod="$2" tries="${3:-40}" not_uid="${4:-}"
+  local i phase uid ready
+  for i in $(seq 1 "$tries"); do
+    phase="$(kube -n "$ns" get pod "$pod" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    uid="$(kube -n "$ns" get pod "$pod" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)"
+    ready="$(kube -n "$ns" get pod "$pod" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    if [ "$phase" = "Running" ] && [ "$ready" = "True" ] \
+       && { [ -z "$not_uid" ] || [ "$uid" != "$not_uid" ]; }; then
+      echo "Running"
+      return 0
+    fi
+    sleep 10
+  done
+  echo "${phase:-<none>}(uid=${uid:-?},ready=${ready:-?})"
   return 1
 }
 

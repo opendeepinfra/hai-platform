@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 05-verify.sh —— 部署后验收：Pod/Service/LB、hai-cli 连通、节点与 GPU 注册情况。
 #
-# 全程只读，且 hai-cli 使用独立配置（HFAI_CLIENT_CONFIG），不覆盖 VM 平台的 ~/.hfai/conf.yml。
+# 除 D2 的登录链路探测会创建一个 access token 外，其余全部只读；
+# 且 hai-cli 使用独立配置（HFAI_CLIENT_CONFIG），不覆盖 VM 平台的 ~/.hfai/conf.yml。
 
 set -uo pipefail
 source "$(dirname "$0")/task_lib.sh"
@@ -14,9 +15,11 @@ kube -n "$TASK_NAMESPACE" get pods -o wide 2>&1 | sed 's/^/      /'
 echo
 kube -n "$TASK_NAMESPACE" get svc,ingress 2>&1 | sed 's/^/      /'
 
-step "B. 等 hai-platform-0 Running"
-PHASE="$(wait_pod_running "$TASK_NAMESPACE" hai-platform-0 30 || true)"
-if [ "$PHASE" = "Running" ]; then ok "hai-platform-0 Running"; else fail "hai-platform-0 phase=$PHASE"; fi
+step "B. 等 hai-platform-0 Running 且 Ready"
+# 必须等到 Ready（而不只是 phase=Running）：平台 Pod 刚重建时，旧 Pod 可能仍在
+# 终止过程中，读到的会是旧配置（例如修补前的 bffURL）。
+PHASE="$(wait_pod_ready "$TASK_NAMESPACE" hai-platform-0 40 || true)"
+if [ "$PHASE" = "Running" ]; then ok "hai-platform-0 Running 且 Ready"; else fail "hai-platform-0 ${PHASE}"; fi
 
 step "C. LoadBalancer 地址"
 LB="$(lb_ip)"
@@ -45,6 +48,40 @@ if [ -n "$LB" ]; then
     503) fail "haproxy(:80) 返回 503 —— 后端服务未起来？" ;;
     *)   ok "haproxy(:80) 已路由到 API（code=$API）" ;;
   esac
+fi
+
+step "D2. 浏览器登录链路（页面 haiConfig.bffURL + studio /proxy/s）"
+# 这是最容易在“单节点 + 同一台机器还跑着 VM 平台”时踩的坑：
+# 平台页面的 bffURL 来自 studio 的 BFF_URL ← 容器 env BFF_ADDR（one/hai-up.sh:531）。
+# 若 BFF_ADDR 是集群内部服务名，浏览器就会去请求
+#   http://hai-platform-svc.hai-platform.svc.cluster.local/proxy/s?endPoint=…
+# 而部署机的 /etc/hosts 通常把这个内部名指向宿主机 103（宿主 nginx → VM 平台），
+# 于是登录代理打到另一个平台 → 403（实测过）。这里同时校验：
+#   1) 页面里的 bffURL 必须是本实例、浏览器可达的地址；
+#   2) 真的走一遍 /proxy/s 的 access_token 创建（浏览器登录的第一步）—— 会新建一个
+#      access token 记录，是本脚本唯一的写操作。
+if [ -n "$LB" ]; then
+  PAGE="$(curl -s --max-time 10 "http://$LB:8080/" || true)"
+  BFF="$(echo "$PAGE" | grep -o '"bffURL":"[^"]*"' | head -1 | sed -E 's/.*:"([^"]*)".*/\1/')"
+  echo "      window.haiConfig.bffURL = ${BFF:-<none>}"
+  case "$BFF" in
+    "http://$LB:8080") ok "bffURL 指向本实例的 studio（浏览器与页面同源）" ;;
+    "")                fail "页面里读不到 bffURL（studio 没起来？）" ;;
+    *".cluster.local"*) fail "bffURL 是集群内部名（$BFF）：浏览器多半会打到宿主 nginx/VM 平台 → 登录 403/503" ;;
+    *)                 fail "bffURL=$BFF，期望 http://$LB:8080（BFF_ADDR 修补未生效？）" ;;
+  esac
+  if [ -n "$BFF" ]; then
+    TOKEN="${USER_INFO##*:}"
+    RESP="$(curl -s --max-time 15 -X POST \
+      "$BFF/proxy/s?endPoint=/operating/user/access_token/create" \
+      -H 'Content-Type: application/json' -H "token: ${TOKEN}" \
+      -d "{\"url\":\"http://$LB/operating/user/access_token/create\",\"config\":{\"method\":\"POST\",\"data\":{\"user_name\":\"${ROOT_USER}\",\"token\":\"${TOKEN}\"},\"headers\":{\"Content-Type\":\"application/json\"}}}" \
+      || true)"
+    case "$RESP" in
+      *'"success":1'*) ok "浏览器登录链路通（studio /proxy/s → access_token 创建成功）" ;;
+      *) fail "浏览器登录链路失败：$(echo "$RESP" | head -c 160)" ;;
+    esac
+  fi
 fi
 
 step "E. hai-cli 连通性（隔离配置）"

@@ -163,8 +163,8 @@ else
   warn "未找到 ${KC_SRC}，跳过（hai-up 没拷贝 kubeconfig？）"
 fi
 
-step "G. 修正平台 StatefulSet（拉取策略 + jupyter 空节点列表）"
-# 两处都改 StatefulSet 模板，改完重建 Pod：
+step "G. 修正平台 StatefulSet（拉取策略 + jupyter 空节点列表 + 浏览器可达的 BFF）"
+# 三处都改 StatefulSet 模板，改完重建 Pod：
 #   1) one/hai-up.sh:510 把平台 StatefulSet 写死 imagePullPolicy: Always，而本机没有内网
 #      registry、镜像只导进了本地 containerd → 平台 Pod 永远 ImagePullBackOff
 #      （Failed to pull … not found）。override.toml 里的 image_pull_policy 只管
@@ -176,23 +176,38 @@ step "G. 修正平台 StatefulSet（拉取策略 + jupyter 空节点列表）"
 #      平台运行时用的是 override.toml 的 [jupyter] shared_node_group_prefix，镜像内也没有
 #      任何 Python 读这个环境变量（已 grep 核实）。仓库里的 one/entrypoint.sh 已同步修好判空，
 #      但已构建的镜像（如 f2cb559）不会因此改变，所以这里按运行期修补。
+#   3) one/hai-up.sh:531-532 把 BFF_ADDR 设成 INGRESS_HOST（集群内部服务名），
+#      entrypoint 再用它导出 BFF_URL/WS_URL，studio 把它写进页面
+#      `window.haiConfig.bffURL` —— 浏览器于是去请求
+#      http://hai-platform-svc.hai-platform.svc.cluster.local/proxy/s?endPoint=…
+#      这个内部名在部署机上通常被 /etc/hosts 指向 103（宿主 nginx → VM 平台），
+#      结果登录代理打到**另一个平台**并返回 403（实测：
+#      curl -X POST http://192.168.100.103/proxy/s → 403；把同一个请求发到本实例
+#      http://192.168.100.150:8080/proxy/s → success:1）。这里把 BFF_ADDR 指回
+#      ${HAI_SERVER_ADDR}:8080，即 studio 自己的、浏览器可达的地址（与 one/hai-up.sh:443
+#      的非 k8s 口径一致）：页面与 API 同源，登录/WebSocket 都不再依赖 DNS 改写。
 if kube -n "$TASK_NAMESPACE" get sts hai-platform >/dev/null 2>&1; then
+  OLD_POD_UID="$(kube -n "$TASK_NAMESPACE" get pod hai-platform-0 -o jsonpath='{.metadata.uid}' 2>/dev/null || true)"
   if kube -n "$TASK_NAMESPACE" patch sts hai-platform \
-      -p '{"spec":{"template":{"spec":{"containers":[{"name":"hai-platform","imagePullPolicy":"IfNotPresent","env":[{"name":"JUPYTER_GROUP","value":""}]}]}}}}' \
+      -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"hai-platform\",\"imagePullPolicy\":\"IfNotPresent\",\"env\":[{\"name\":\"JUPYTER_GROUP\",\"value\":\"\"},{\"name\":\"BFF_ADDR\",\"value\":\"${HAI_SERVER_ADDR}:8080\"}]}]}}}}" \
       2>&1 | sed 's/^/      /'; then
-    ok "hai-platform StatefulSet → imagePullPolicy=IfNotPresent，容器内 JUPYTER_GROUP 置空"
+    ok "hai-platform StatefulSet → IfNotPresent + 空 JUPYTER_GROUP + BFF_ADDR=${HAI_SERVER_ADDR}:8080"
   else
     warn "patch StatefulSet 失败，平台 Pod 可能仍会 ImagePullBackOff / CrashLoopBackOff"
   fi
   kube -n "$TASK_NAMESPACE" delete pod hai-platform-0 --ignore-not-found --wait=false 2>&1 | sed 's/^/      /' || true
   ok "已重建 hai-platform-0"
 else
+  OLD_POD_UID=""
   warn "未找到 StatefulSet hai-platform（跳过拉取策略修正）"
 fi
 
-step "H. 等 hai-platform-0 Running"
-PHASE="$(wait_pod_running "$TASK_NAMESPACE" hai-platform-0 30 || true)"
-[ "$PHASE" = "Running" ] || warn "hai-platform-0 当前 phase=${PHASE}（继续尝试加固）"
+step "H. 等 hai-platform-0 变成 Running 且 Ready（且确认是新 Pod）"
+# 只判 phase=Running 会撞上正在终止的旧 Pod（StatefulSet 是 OrderedReady，新 Pod
+# 要等旧 Pod 完全消失才创建），验收就会读到旧的配置——实测踩过：verify 读到的页面
+# bffURL 还是修补前的内部服务名。所以这里同时要求 UID 变了、且 Ready=True。
+PHASE="$(wait_pod_ready "$TASK_NAMESPACE" hai-platform-0 40 "${OLD_POD_UID:-}" || true)"
+[ "$PHASE" = "Running" ] || warn "hai-platform-0 当前 ${PHASE}（继续尝试加固）"
 kube -n "$TASK_NAMESPACE" get pods -o wide 2>/dev/null | sed 's/^/      /' || true
 
 step "I. 确保 Pod 内 redis 真的在跑"

@@ -27,8 +27,16 @@
 | [terraform-multipass-vms](terraform-multipass-vms/) | 创建/销毁 VM 与共享盘挂载 | `create_vms.sh` / `destroy_vms.sh` / `verify_vms.sh` |
 | [terraform-k8s-ha](terraform-k8s-ha/) | 在 VM 上建 MicroK8s 集群 | `create.sh` / `destroy.sh` / `verify.sh` |
 | [terraform-hai-platform](terraform-hai-platform/) | 把平台部署到已有集群 | `create.sh` / `destroy.sh` / `verify.sh` |
+| [terraform-k8s-single-node](terraform-k8s-single-node/) | **路线 A（新）**：不用 VM，把 host `103` 本机初始化成单机 K8s 全节点 + GPU（V100） | `create.sh` / `verify.sh` / `destroy.sh` |
 
-三个目录的 `README.md` 是各自最详细的说明，**先读它们**。
+四个目录的 `README.md` 是各自最详细的说明，**先读它们**。
+
+> **为什么多出第四套**：上面三层的节点是 Multipass VM，而 V100 在 **宿主机** 上，
+> Multipass（QEMU 驱动）不支持 PCI/GPU 直通，所以 VM 集群永远拿不到显卡
+> （实测：VM 内 `lspci` 无 NVIDIA 设备、集群无 `nvidia.com/gpu`）。
+> `terraform-k8s-single-node` 直接把 103 变成单节点集群，从而用上本机 V100；
+> 它与上面三层**互不干扰**（独立 kubeconfig `/root/.kube/hai-single.conf`、独立网段
+> `10.244.0.0/16` + `10.96.0.0/12`），可以并存或替换。
 
 ## 2. 凭据（都不入库）
 

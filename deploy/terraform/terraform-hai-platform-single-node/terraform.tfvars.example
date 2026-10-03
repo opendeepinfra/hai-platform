@@ -1,0 +1,46 @@
+# terraform-hai-platform-single-node 变量示例
+#
+# 复制为 terraform.tfvars 后按需修改（已在 .gitignore 中）。
+# 默认值就是 103 + 单节点集群的现状，通常**不需要**任何覆盖。
+
+# 集群与节点
+# kubeconfig_path = "/root/.kube/hai-single.conf"   # terraform-k8s-single-node 生成
+# node_name       = "fireflyer-0003"
+# task_namespace  = "hai-platform"
+
+# 数据目录（必须与 VM 平台的 /nfs-shared/hai-platform 不同！）
+# shared_fs_root  = "/nfs-shared/hai-single"
+
+# 镜像（需已存在于宿主 Docker；会被导入 k8s containerd）
+# platform_image  = "registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:f2cb559"
+# base_image      = ""    # 留空 = platform_image
+# train_image     = ""    # 留空 = platform_image
+
+# GPU：单卡必须是 1（平台按 DB 的 host.gpu_num 分卡）
+# node_gpus       = 1
+# has_rdma_hca_resource = 0
+
+# 分组与节点角色（单节点：training + manager 都是本机；jupyter 不启用）
+# training_group  = "training"
+# jupyter_group   = "jupyter_cpu"
+# manager_nodes   = "fireflyer-0003"
+# mars_prefix     = "hai"
+
+# 访问地址：MetalLB 的 LAN VIP（Mac 可直连）
+# hai_server_addr = "192.168.100.150"
+# ingress_host    = "hai-platform-svc.hai-platform.svc.cluster.local"   # 必须是 DNS 名，不能是 IP
+# metallb_ip_range = "192.168.100.150/32"
+# metallb_version  = "v0.14.9"
+
+# 账号
+# user_info       = "haiadmin:10020:123456"
+# root_user       = "haiadmin"
+# bff_admin_uid   = 10000
+# postgres_user   = "root"
+# postgres_password = "root"
+# redis_password  = "root"
+
+# 测试开关
+# run_task_tests     = true    # 是否跑 π / GPU 任务端到端测试
+# task_test_version  = "1.0"   # 改这个值可强制重跑任务测试
+# min_free_disk_gb   = 30

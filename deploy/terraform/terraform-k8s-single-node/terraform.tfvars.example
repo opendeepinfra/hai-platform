@@ -1,0 +1,63 @@
+# terraform-k8s-single-node 变量示例
+#
+# 复制为 terraform.tfvars 后按需修改（terraform.tfvars 已在 .gitignore 中）。
+# 默认值就是 103 现状，通常**不需要**任何覆盖。
+
+# 运行 Terraform 与承载集群的主机（仅信息性）
+# host = "fireflyer@192.168.100.103"
+
+# apiserver 地址与节点名
+# node_ip   = "192.168.100.103"
+# node_name = ""            # 留空 => hostname（fireflyer-0003）
+
+# K8s 版本（必须与 103 上 kubeadm/kubelet 一致）
+# kubernetes_version = "v1.29.9"
+# 控制面镜像仓库：默认阿里云（103 实测比 registry.k8s.io 快 3 倍）
+# image_repository   = "registry.aliyuncs.com/google_containers"
+
+# 网段规划（避开 VM 集群 calico 10.1.0.0/16、service 10.152.183.0/24、
+#            Multipass 10.205.52.0/24、Docker 172.17/172.18、ZeroTier 10.135/10.171）
+# pod_subnet      = "10.244.0.0/16"
+# service_subnet  = "10.96.0.0/12"
+# bridge_subnet   = "10.244.0.0/24"
+
+# 平台分组标签（hai-up 的 MARS_PREFIX / 分组）
+# mars_prefix = "hai"
+# mars_group  = "training"
+
+# GPU 相关
+# pause_image                  = "registry.k8s.io/pause:3.9"
+# default_runtime              = "nvidia"        # 平台任务不申请 nvidia.com/gpu，只有默认 nvidia 才看得到卡
+# install_device_plugin        = true
+# device_plugin_image          = "nvcr.io/nvidia/k8s-device-plugin:v0.17.1"   # 本机 containerd 已缓存
+# gpu_smoke_image              = "ubuntu:20.04"  # 本机 Docker 已有，可离线导入
+# gpu_smoke_import_from_docker = true
+
+# containerd / Docker（两者共用同一个 containerd）
+# restart_containerd   = true
+# allow_docker_restart = false   # true 才允许自动重启 dockerd（会重启 RustFS 等容器）
+# containerd_dropin    = "/etc/containerd/conf.d/99-nvidia.toml"
+
+# 陈旧 Sealos 节点复位（首次必须 true；重复 apply 幂等）
+# reset_stale_node = true
+
+# kubectl（本机自带的 v1.36 与 1.29 控制面偏差过大，默认装一个匹配版本）
+# install_kubectl = true
+# kubectl_path    = "/usr/local/bin/kubectl-1.29"
+# kubeconfig_path = "/root/.kube/hai-single.conf"   # 不覆盖 /root/.kube/config
+# 下载源（每个限时 90s，全部失败会自动降级用系统 kubectl，不会卡死 apply）；
+# 实测 103 上 dl.k8s.io 极慢，离线/内网请用 kubectl_local_path 直接指定二进制。
+# kubectl_urls       = ["https://dl.k8s.io", "https://cdn.dl.k8s.io"]
+# kubectl_local_path = ""        # 例如 "/root/kubectl-1.29"
+
+# CNI 插件来源
+# cni_plugin_source   = "apt"     # apt | tarball
+# cni_plugins_tarball = ""
+# bridge_cni_version  = "0.3.1"   # Ubuntu 22.04 的 containernetworking-plugins 是 0.9.1
+
+# 前置检查阈值
+# min_free_disk_gb = 40
+# min_mem_gb       = 8
+
+# destroy 行为
+# restore_containerd_dropin = true

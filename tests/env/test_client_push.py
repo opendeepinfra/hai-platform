@@ -400,3 +400,81 @@ def test_issue5_push_does_not_chmod_home(venv_api, tmp_path, monkeypatch):
     assert result['success'] == 1, result
     assert [p for p in chmods if str(fake_home) in p] == [], \
         f'push_venv 不该 chmod 家目录，实际: {chmods}'
+
+
+# --------------------------------------------------------------------------- provider 解析
+# 旧实现写死默认 'oss'：在 cloud.storage.provider='s3'（自建 RustFS/MinIO）的部署上，
+# `hai-cli env push` 不显式传 --provider 就必然报 `get_sts_token returns non oss data`。
+# 现在的解析顺序：显式 --provider > $CLOUD_STORAGE_PROVIDER > 服务端 API-11 返回的 provider
+#                > 工作区 .hfai/workspace.yml > 'oss'（兜底）
+
+def _prep_env(tmp_path, name='prov'):
+    _use_env_dir(tmp_path)
+    prefix = tmp_path / f'{name}_0'
+    prefix.mkdir()
+    Haienv.insert(haienv_name=name, haienv_config=HaienvConfig(
+        path=str(prefix), extend='False', extend_env='', py='3.8'),
+        outside_db_path=str(tmp_path / 'venv.db'))
+    return prefix
+
+
+def _run_push(venv_api, monkeypatch, name='prov', provider='', pre_extra=None):
+    sent = {}
+
+    async def _fake_requests(method, url, **kwargs):
+        if 'update_cluster_venv' in url:
+            res = {'success': 1, 'path': f'/cluster/{name}_0', 'exists': False,
+                   'cloud_path': f'hfai/shared/hfai_envs/U-A/{name}_0'}
+            res.update(pre_extra or {})
+            return res
+        return {'success': 1, 'registered': True}
+
+    monkeypatch.setattr(venv_api, 'async_requests', _fake_requests)
+    monkeypatch.setattr(venv_api.os, 'system', lambda cmd: (sent.setdefault('cmd', cmd), 0)[1])
+    result = asyncio.get_event_loop().run_until_complete(venv_api.push_venv(name, provider=provider))
+    return result, sent.get('cmd', '')
+
+
+def test_provider_from_server_response(venv_api, tmp_path, monkeypatch):
+    '''③ 服务端 API-11 返回 provider=s3 → 客户端透传 --env_provider s3。'''
+    _prep_env(tmp_path)
+    monkeypatch.delenv('CLOUD_STORAGE_PROVIDER', raising=False)
+    monkeypatch.setattr(venv_api, '_provider_from_workspace_config', lambda: '')
+    result, cmd = _run_push(venv_api, monkeypatch, pre_extra={'provider': 's3'})
+    assert result['success'] == 1, result
+    assert '--env_provider s3' in cmd, cmd
+
+
+def test_provider_from_workspace_config(venv_api, tmp_path, monkeypatch):
+    '''④ 服务端没给 provider 时，退回当前工作区 .hfai/workspace.yml 的 provider。'''
+    _prep_env(tmp_path)
+    work = tmp_path / 'ws'
+    (work / '.hfai').mkdir(parents=True)
+    (work / '.hfai' / 'workspace.yml').write_text(
+        f'local: {work}\nprovider: s3\nremote: hfai/U-A/workspaces/x\nworkspace: x\n')
+    monkeypatch.chdir(work)
+    monkeypatch.delenv('CLOUD_STORAGE_PROVIDER', raising=False)
+    result, cmd = _run_push(venv_api, monkeypatch)
+    assert result['success'] == 1, result
+    assert '--env_provider s3' in cmd, cmd
+
+
+def test_provider_explicit_and_env_win(venv_api, tmp_path, monkeypatch):
+    '''①② 显式 --provider 高于环境变量；环境变量高于服务端返回值。'''
+    _prep_env(tmp_path)
+    monkeypatch.setattr(venv_api, '_provider_from_workspace_config', lambda: 's3')
+    monkeypatch.setenv('CLOUD_STORAGE_PROVIDER', 'oss')
+    _, cmd = _run_push(venv_api, monkeypatch, pre_extra={'provider': 's3'})
+    assert '--env_provider oss' in cmd, cmd                      # ② 环境变量赢过服务端/工作区
+    _, cmd2 = _run_push(venv_api, monkeypatch, provider='s3')    # ① 显式赢过环境变量
+    assert '--env_provider s3' in cmd2, cmd2
+
+
+def test_provider_fallback_oss(venv_api, tmp_path, monkeypatch):
+    '''⑤ 三处都拿不到时兜底 'oss'（保持旧行为，不回退已有部署）。'''
+    _prep_env(tmp_path)
+    monkeypatch.delenv('CLOUD_STORAGE_PROVIDER', raising=False)
+    monkeypatch.setattr(venv_api, '_provider_from_workspace_config', lambda: '')
+    result, cmd = _run_push(venv_api, monkeypatch)
+    assert result['success'] == 1, result
+    assert '--env_provider oss' in cmd, cmd

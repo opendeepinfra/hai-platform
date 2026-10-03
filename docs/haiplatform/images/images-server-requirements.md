@@ -240,13 +240,18 @@
 | 入参 | `image_tar`（**必填**，共享盘绝对路径）；`image`（**选填**，`name:tag`；缺省由 `image_tar` 的 basename 派生并去掉 `.tar` 后缀）；`shared_group` **不接受**（服务端取 `user.shared_group`） |
 | 出参 | `{'success':1,'msg':'...','image':'<registry>/<group>/<name:tag>','image_tar':'...','status':'processing','task_id':<id>}` |
 | 失败 | `INVALID_PARAM`（格式/缺参）、`PATH_ESCAPE`（越界）、`IMAGE_TAR_NOT_FOUND`（共享盘不存在）、`FEATURE_DISABLED`、`UNAUTHORIZED`、`IMAGE_NAME_CONFLICT`（同名不同 tar，见 Q-3） |
-| 幂等 | **按 `image_tar` upsert**：已存在且 `status in (processing, loading, loaded)` → 直接返回当前状态（不改行）；`failed` → 允许重试（重置为 `processing`） |
+| 幂等 | **按 `image_tar` upsert**：已存在且 `status in (processing, loading, loaded)` → 直接返回当前状态（不改行）；`failed` → 允许重试（重置为 `processing`）。**边界（D15）**：若该行是 `loaded` 且 `image` 名不同，`load`（含 `--force`）**不会改名**，而当前实现仍返回成功 —— 见下方「边界」注 |
 | 兼容 | 只传 `image_tar` 的旧形态必须可用（CMP-01）；**本分支 `images push` 落盘成功后自动调用本接口**（FR-18） |
 
 > **实现修正 I18（必须遵守）**：入参 `image_tar` 与列 `path` **不是同一个东西**。
 > `image_tar` 是**用户提供的 tar 包路径**；`path` 是**加载完成后镜像在共享盘上的位置**，供运行期
 > `HFAI_IMAGE_WEKA_PATH` 使用。API-15 在 `processing` 阶段**不得**把 `image_tar` 直接写进 `path`
 > （否则运行期 link 会指向一个 tar 文件而非镜像位置）。`path` 由数据面执行成功后在 API-16 中回报。
+
+> **边界（2026-10-03 实测，D15，未修）**：`--force` **只对 `failed`/`deleted` 行生效**。若同一 `image_tar` 已有一行
+> `status='loaded'` 而 `image` 名不同，`load`（含 `--force`）不会改名，且当前实现仍返回「镜像已登记，状态：loaded」
+> （静默 no-op）。**想改名必须先 `images delete`（把该行置为 `deleted`）或改用另一个 tar 路径登记**。
+> 证据与修复建议见 [images-server-test-report.md](images-server-test-report.md) §6.1；风险号 **R-16**（设计 §15）。
 
 ### 4.2 API-16 `POST /ugc/user/train_image/update_status`（状态回报）
 

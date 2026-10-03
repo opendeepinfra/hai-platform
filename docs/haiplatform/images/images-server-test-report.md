@@ -50,6 +50,11 @@
 **D13** stage2 进度到 100% 与文件真正落盘之间有窗口期，立刻 `load` 会得到「共享盘上不存在镜像包」；
 **D14** 本环境 RustFS 下发静态 AK/SK，STS 前缀**不被强制** —— 环境限制，非本特性引入）。
 
+**另有 1 个已复现但未修的缺陷 D15**（2026-10-03 巡检发现）：同一 `image_tar` 已是 `loaded` 且 `image` 名不同时，
+`load --force` **静默不改名**，但客户端仍报「镜像已登记，状态：loaded」——根因是 `a_upsert_image` 的
+`where status in ('failed','deleted')`（HC-03 的有意设计）叠加 `async_load` 不回读校验；
+`ErrorCode.IMAGE_NAME_CONFLICT` 已定义但**当前无人使用**。详见 §6.1 与设计 §15 **R-16**。
+
 ---
 
 ## 1. 环境与部署（旧分支部署，tag `f2cb559`）
@@ -81,6 +86,14 @@ image_mount_root = '/nfs-shared/hai-platform/workspace/image'
 
 > **与文档的偏差（已在[决策记录](images-server-decisions.md) §5.2 登记）**：103 的平台 StatefulSet
 > 只挂了 `.../workspace`，没挂 `.../image`，所以 `image_path` 取到 workspace 之下。
+>
+> **部署须知（2026-10-03 巡检确认，务必知道）**：平台 pod **没有挂载代码目录**（只挂 `kubeconfig/log/db/redis/workspace/`
+> `pglog/redislog/initsql/overridetoml` 这些 hostPath），因此 `deploy_pod_dev.sh` 的**热部署在容器重启后会丢失**，
+> pod 会回退到镜像内版本。实测：103 主机 10:51 重启 → 容器重启 1 次 → pod 内 `api/resource/image/default.py` 等回到
+> 镜像 `f2cb559` 的内容（**API-19 返回 HTTP 404**，`images push` 在预检处失败）；重跑
+> `PATHS="api base_model client cloud_storage conf db_schemas server_model tests plugins docs image_metrics.py experiment_manager marsv2 one" bash docs/haiplatform/scripts/deploy_pod_dev.sh`
+> 后恢复（10/10 文件 MATCH、API-19 → 200、1 MB `--no-load` 上传自证通过）。长期/生产环境应走
+> `build_hai.sh` + `redeploy_local.sh`，让代码随镜像发布。
 >
 > **上传通道将新增的配置项（本分支，尚未写入任何环境）**：`[image].upload_enabled`（默认 `true`）、
 > `[image].max_tar_bytes`（默认 `0` 不限制）、`[image].upload_require_precheck`（默认 `false`）。
@@ -225,8 +238,41 @@ NOTICE:  relation "train_image_group_tar_uindex" already exists, skipping
 | **D14**（环境限制，非本特性引入） | STS 前缀**不被强制**：用本用户凭证可写入 `hfai/shared/images/other-user/...`（`ALLOWED`） | 103 的 RustFS 无阿里云 STS，`cloud_storage/provider/s3.py:276-293` 走「P0 降级实现」，下发**静态 AK/SK**（`security_token` 为空），prefix 仅由客户端自觉遵守 | 代码侧无法修：生产需接 RustFS STS（AssumeRole + inline policy）或 bucket policy（**设计 §15 R-14**）；测试脚本按 **WARN** 归类并在 §7.4 显式声明 | E2E 步骤 6 的越权写负例（boto3） |
 
 > 缺陷编号沿用旧分支记录（D6 是已删除的占位行，故旧编号不连续）。D10~D13 全部在 103 上复现并修复后
-> 重跑通过（§9.2）；D14 是**环境限制**，已登记为设计 §15 的 R-14 与 Checklist 的未验证项。
+> 重跑通过（§9.2）；D14 是**环境限制**，已登记为设计 §15 的 R-14 与 Checklist 的未验证项；
+> **D15 已复现但未修**（见 §6.1，登记为设计 §15 的 R-16）。
 > **仍未做的故障注入**：FI-09~FI-11（stage2 中途失败/续传、RustFS 不可达、共享盘只读）—— 见 §9.3。
+
+### 6.1 巡检发现（2026-10-03）：D15 —— `load --force` 在「同一 tar 换 image 名」时静默 no-op（**未修**）
+
+**现象**：把 `…/workspace/image/demo:v2/demo.tar`（该 tar 的 `manifest.json` 里 `RepoTags` 是
+`registry.high-flyer.cn/hfai/demo:v1`）用 `images load … --image demo:v1 --force` 重新登记：
+客户端打印 **「镜像已登记，状态：loaded」**，但 `train_image` 里那一行的 `image` 仍是 **`demo:v2`**、`status='loaded'`；
+紧接着用 `-i registry.high-flyer.cn/hfai/demo:v1` 提交任务，被拒：
+`用户所在的组 [hfai] 不存在镜像 [registry.high-flyer.cn/hfai/demo:v1] 或镜像仍在加载…`。
+
+**根因（两处叠加）**：
+
+1. `server_model/selector/train_image_selector.py:130-148` 的 upsert 带 `where "train_image"."status" in ('failed','deleted')`
+   —— 这是 HC-03 的**有意设计**（`loaded` 行不被覆盖），因此「改 image 名」的写入被静默丢弃（既不改行也不报错）；
+2. `server_model/user_impl/user_image/implement.py::async_load` **不回读校验**最终行的 `image`/`status`，
+   于是照样返回成功。仓库里已定义 `ErrorCode.IMAGE_NAME_CONFLICT`（`cloud_storage/service/errors.py:36`），**当前无人使用**。
+
+**影响**：用户看到「成功」但实际没有改名 → 后续任务提交失败，排障成本高（与 I10「失败被吞」同类，但方向相反：**成功被虚报**）。
+
+**当前规避（已实测有效）**：
+
+```bash
+# 让那一行进入 deleted/failed（或直接删行）后再登记，改名才会真正生效：
+hai-cli images delete registry.high-flyer.cn/hfai/demo:v2     # 软删该 image 的全部行
+hai-cli images load <tar> --image demo:v1 --force            # 再登记即可插入/更新为 demo:v1
+# 或者换一个 tar 路径登记（(shared_group,image_tar) 不同 → 走 insert 分支）
+```
+
+**修复建议（未做）**：`async_load` 在 upsert 之后按 `(shared_group, image_tar)` 回读该行，若 `image` 与请求不一致，
+用现成的 `IMAGE_NAME_CONFLICT` 显式报错并给出「先 delete 或换 tar 路径」的指引；补一条单测（TC-UP 侧）。
+
+**巡检侧备注**：同一次巡检还确认了「热部署不抗容器重启」（见 §1 的部署须知）与「`images delete` 的 3 段 URL 必须完整
+（`images delete cli-smoke:v1` 会被拒：`镜像名必须恰好 3 段 registry/shared_group/image`）」——后者是既有契约，不算缺陷。
 
 **I19 的处置建议（写进 OPS 手册）**：生产上「首次导入大 tar」的窗口内，任务不应被判 unschedulable。
 本次已在 `check_unschedulable` 中放行 initContainer 运行中的 pod；若部署方希望保留更激进的重启策略，
@@ -453,3 +499,4 @@ bash docs/haiplatform/scripts/e2e_images_push.sh      # → PASS=33 WARN=1 FAIL=
 | **PERF-01/02**（大 tar 上传耗时/吞吐基线） | 未做；本轮只记录 1 GB tar 在 103 上可完成（含 stage1 + stage2 + 首轮导入，链路总耗时约 3~4 分钟） |
 | **生产三级灰度、看板/告警、上线后观察** | 未做（OBS-04/05、REL-02/03、POST-*） |
 | **SEC-08 的强制前缀隔离** | 环境不具备（D14 / R-14）：需生产侧接 RustFS STS 或 bucket policy |
+| **D15（未修）**：`load --force` 在「同一 tar 换 image 名」时静默 no-op、仍报成功 | 已复现并记入 §6.1 / 设计 §15 R-16；当前规避 = 先 `delete`（或换 tar 路径）再 `load`；建议修复 = `async_load` 回读校验 + `IMAGE_NAME_CONFLICT` |

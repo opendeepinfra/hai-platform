@@ -685,6 +685,13 @@ bash docs/haiplatform/scripts/e2e_images_push.sh
 **本阶段仍未做（诚实声明）**：`UP-09` 的 **stage2 故障注入**（FI-09 中断/续传、FI-10 RustFS 不可达、FI-11 共享盘只读/写满）
 未执行 —— 上传闭环、幂等与「上传成功但登记失败」的错误面已在实测中复现并修复（D13），但按脚本注入 stage2 失败尚未做。
 
+> **已知未修缺陷（D15，2026-10-03 巡检）**：同一 `image_tar` 已是 `loaded` 且 `image` 名不同时，`load --force` **静默不改名**
+> 但客户端仍报成功（`a_upsert_image` 的 `where status in ('failed','deleted')` + `async_load` 不回读校验）。
+> 规避：先 `images delete` 再 `load`，或改用另一个 tar 路径登记。详见 [images-server-test-report.md](images-server-test-report.md) §6.1 与设计 §15 **R-16**。
+>
+> **部署须知（同次巡检）**：平台 pod 未挂载代码目录，`deploy_pod_dev.sh` 的**热部署在容器重启后丢失**（回退到镜像内版本，
+> 实测 API-19 回到 404）；容器重启后需重跑一次热部署，或走 `build_hai.sh` + `redeploy_local.sh`。见 test-report §1。
+
 ---
 
 ## 19. 未验证清单（诚实声明，勿当作「已通过」）

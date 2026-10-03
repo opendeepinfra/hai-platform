@@ -291,7 +291,7 @@ Content-Type: text/plain
 | 处理 | ① 灰度开关；② 归一化 `image_tar` 为绝对路径并 `check_is_subpath(image_root, ...)`；③ 校验文件存在且非目录、大小 > 0；④ 派生/校验 `image`（缺省 = `basename(tar)` 去掉 `.tar` 后缀；白名单正则；**不含 `/`**；**不得自动补 tag**，见下方「实现修正 I6b」）；⑤ 计算 `shared_group = user.shared_group`；⑥ **按 `image_tar` 幂等 upsert** 到 `train_image`；⑦ 选后端决定终态（`register` → 直接 `loaded`；`task`/`registry` → `processing` + 建任务写 `task_id`） |
 | 成功 | `{'success':1,'msg':'镜像已登记，状态：loaded','image':'registry.high-flyer.cn/hfai/demo:v1','image_tar':'/nfs-shared/.../demo.tar','status':'loaded','task_id':0}` |
 | 失败 | `FEATURE_DISABLED` · `INVALID_PARAM`（缺参/名字非法） · `PATH_ESCAPE`（越界） · `IMAGE_TAR_NOT_FOUND` · `IMAGE_NAME_CONFLICT`（同名不同 tar，见 Q-3） · `UNAUTHORIZED` |
-| 幂等 | 已存在且 `status in (processing, loading, loaded)` → **原样返回当前行**（不重置、不新建）；`failed`/`deleted` → 允许重试，重置为 `processing`（`deleted` 需显式 `--force`，见 Q-3） |
+| 幂等 | 已存在且 `status in (processing, loading, loaded)` → **原样返回当前行**（不重置、不新建）；`failed`/`deleted` → 允许重试，重置为 `processing`（`deleted` 需显式 `--force`，见 Q-3）。**边界（D15 / R-16）**：同一 `image_tar` 已是 `loaded` 而 `image` 名不同时，upsert 的 `where status in ('failed','deleted')` 使本次写入**静默不生效** → `load --force` **不改名**；且 `async_load` 不回读校验，仍返回成功（`ErrorCode.IMAGE_NAME_CONFLICT` 已定义但未使用）。改名需先 `delete` 或换 tar 路径 |
 | 兼容 | 只传 `image_tar` 可用（CMP-01）；响应的 `msg` 字段是旧客户端唯一消费的字段（`print(result['msg'])`），**必须始终存在** |
 | 入口关系 | `images push` 落盘成功后**自动调用本接口**（主入口）；手工放盘后 `images load` 也调它（兼容旁路）——**两条入口共用同一条登记语义**，没有第二套写库路径 |
 
@@ -908,7 +908,7 @@ async def push_image(image_tar, image=None, force=False, no_load=False):
 | `processing`/`loading` | 回报成功 | `loaded` | ✅ | 必须带 `path` |
 | `processing`/`loading` | 回报失败 | `failed` | ✅ | `message` 记录原因 |
 | `failed` | 重新 `load` | `processing`/`loaded` | ✅ | 幂等 upsert 的 `where` 分支 |
-| `loaded` | 重新 `load` | — | ❌（保持 `loaded`，返回现状） | FR-06；也是「重复 push 幂等」的落点 |
+| `loaded` | 重新 `load` | — | ❌（保持 `loaded`，返回现状） | FR-06；也是「重复 push 幂等」的落点。**同 tar 换 `image` 名也落在这一分支 → 静默不改名（D15 / R-16）** |
 | `loaded` | `delete` | `deleted` | ✅ | |
 | `deleted` | `load`（不带 `force`） | — | ❌ | 需显式 `--force`（Q-3） |
 | `deleted` | 回报 `loaded` | — | ❌ | `ILLEGAL_TRANSITION` |
@@ -1220,6 +1220,7 @@ images load（兼容旁路）─────────────────
 | **R-13**（本分支） | P0 资产**并入新基线**时出现语义漂移（基线 `33a5b26` 已含 env 家族改动） | 中 | S9 明确要求「在并入基线上重跑 L1/L2/L3 + preflight」，旧分支结论不得直接平移（§14 S9）——**已执行：S9-2 全部通过**（test-report §9.1） |
 | **R-14**（本分支，**已发生**·环境限制） | STS 授权前缀**不被存储侧强制**：自建 RustFS 走 `cloud_storage/provider/s3.py:276-293` 的「P0 降级实现」，下发静态 AK/SK（`security_token` 为空），实测可用本用户凭证写入 `hfai/shared/images/other-user/...` → **SEC-08 的「越权写必须失败」在 103 环境不可满足** | 中（内网测试环境）/ 高（多租户生产） | 代码侧无法修：生产必须接 RustFS STS（AssumeRole + inline policy）或 bucket policy；在接入前，**对象存储桶必须视为平台内部可信域**（与 `workspace`/`env` 上传同一限制）。测试脚本对该项按 **WARN** 归类并显式打印（test-report §7.4/§9.2） |
 | **R-15**（本分支，**已发生**） | `../x.tar` 这类越界相对路径会让 stage2 在**循环内**抛 `PATH_ESCAPE`，但 `user_sync_status` 已被置为 `stage2_running` 且无人收尾 → 同名同文件的后续请求会命中「上一次同步正在进行中」幂等短路（既有 `workspace` 行为，不是 images 新增） | 低 | 客户端对同一 tar 用**唯一** `index` 重试（E2E 脚本已改为每次用不同的越界文件名）；后续可考虑在 `submit_to_cluster` 的失败路径上补 `stage2_failed` 收尾 |
+| **R-16**（本分支，**已发生·未修**） | **「成功被虚报」**：同一 `image_tar` 已是 `loaded` 且 `image` 名不同时，`load --force` 被 upsert 的 `where status in ('failed','deleted')` 静默丢弃，但 `async_load` 不回读校验 → 客户端打印「镜像已登记，状态：loaded」，随后任务提交才报「不存在镜像」 | 中（排障成本高，且与 I10 方向相反） | 短期规避：先 `images delete` 或换 tar 路径；修复建议：`async_load` 回读 `(shared_group,image_tar)` 行并比对 `image`，不一致则抛现成的 `ErrorCode.IMAGE_NAME_CONFLICT` 并提示先 `delete`（test-report §6.1 / D15，**未做**） |
 
 **开放问题**：Q-1..Q-8（P0 已全部冻结，见 [images-server-decisions.md](images-server-decisions.md)）。
 **本分支上传通道新增 Q-9~Q-12 —— 已按推荐值冻结并实现（提交 `fc773e5`），103 端到端验证通过（PASS=33 WARN=1 FAIL=0）**：

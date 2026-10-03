@@ -181,6 +181,9 @@ busybox + 宿主 `ctr` 二进制即可完成 `ctr -n k8s.io images import`，无
   不传时旧形态零变化（CMP-01）。
 - **上传通道沿用同一选项名但语义不同**：`images push --force` 表示「忽略『已在集群』判定强制重传」
   （与 `load --force` 的「忽略已删除行」刻意区分，帮助文本必须写清，设计 §6.4）。
+- **边界（2026-10-03 巡检实测，D15）**：`load --force` **只对 `failed`/`deleted` 行生效**；同一 tar 已是 `loaded`
+  且 `image` 名不同时是**静默 no-op**（接口仍返回成功）。改名需先 `images delete` 或换 tar 路径；
+  修复建议（`async_load` 回读校验 + 现成的 `IMAGE_NAME_CONFLICT`）见设计 §15 **R-16** / test-report §6.1，**未做**。
 
 ### 5.5 本分支文档集与旧分支文档集冲突 —— **以本分支为准**
 

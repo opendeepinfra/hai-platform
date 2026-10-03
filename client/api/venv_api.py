@@ -132,6 +132,43 @@ def _build_push_cmd(venv_name, local_path, remote_path, provider, force, no_chec
     return ' '.join(shlex.quote(str(item)) for item in cmd)
 
 
+def _provider_from_workspace_config() -> str:
+    '''
+    从当前工作区的 `.hfai/workspace.yml` 里取 provider（该文件本来就记录了部署用哪种云存储）。
+
+    `hai-cli env push` 常在工作区目录里执行；取不到（不在工作区/字段缺失/依赖异常）时返回空串，
+    不影响主流程。惰性 import，避免与 `hfai.client.commands` 形成导入环。
+    '''
+    try:
+        import munch
+        from hfai.client.commands.utils import get_workspace_conf
+        wcf, _ = get_workspace_conf(os.getcwd())
+        if wcf and os.path.exists(wcf):
+            return str(munch.Munch.fromYAML(open(wcf)).get('provider') or '').strip().lower()
+    except Exception:
+        pass
+    return ''
+
+
+def _resolve_provider(pre_result, explicit_provider='') -> str:
+    '''
+    决定 `haiworkspace push --env_provider` 用哪个 provider。
+
+    顺序：显式 `--provider` / `$CLOUD_STORAGE_PROVIDER` → 服务端 API-11 返回的 `provider`
+    → 工作区 `.hfai/workspace.yml` → `'oss'`（兜底，保持旧行为）。
+
+    背景：部署可能是 `s3`（自建 RustFS/MinIO）而不是 `oss`，写死 `oss` 会让
+    `hai-cli env push` 在没传 `--provider` 时报 `get_sts_token returns non oss data`。
+    '''
+    for candidate in (explicit_provider,
+                      str((pre_result or {}).get('provider') or ''),
+                      _provider_from_workspace_config()):
+        candidate = str(candidate or '').strip().lower()
+        if candidate:
+            return candidate
+    return 'oss'
+
+
 async def push_venv(venv_name, force=False, no_checksum=False, no_zip=False, no_diff=False,
                     list_timeout=300, sync_timeout=1800, cloud_connect_timeout=120,
                     token_expires=1800, part_mb_size=100, provider='', proxy=''):
@@ -154,7 +191,14 @@ async def push_venv(venv_name, force=False, no_checksum=False, no_zip=False, no_
             'msg': f'名为{venv_name}的虚拟环境为extend模式，暂不支持上传extend模式的venv'
         }
 
-    provider = provider or os.environ.get('CLOUD_STORAGE_PROVIDER', 'oss')
+    # provider 解析**推迟到 API-11 预检之后**（见下方 ② 之前）：本部署
+    # `cloud.storage.provider = 's3'`（RustFS），而这里原先写死默认 `'oss'`，于是
+    # `hai-cli env push` 在没显式传 `--provider` 时必然失败：
+    # `get_sts_token returns non oss data`。解析顺序：
+    #   ① `--provider` 显式指定 → ② `$CLOUD_STORAGE_PROVIDER`
+    #   → ③ 服务端 API-11 返回的 provider → ④ 当前工作区 `.hfai/workspace.yml` 的 provider
+    #   → ⑤ 兜底 `'oss'`（保持旧行为，仅当部署确实是 oss 时才对）
+    explicit_provider = (provider or os.environ.get('CLOUD_STORAGE_PROVIDER') or '').strip().lower()
 
     # 设计 §4.4 修复路径 ①：服务端需要写 {user_env_dir}/venv.db，而该目录通常由用户以
     # 755 创建。这里尽力把它放宽到 777（只影响权限位，不改语义）；失败不回滚、不影响主流程，
@@ -211,6 +255,8 @@ async def push_venv(venv_name, force=False, no_checksum=False, no_zip=False, no_
         }
 
     # ---------------------------------------------------------------- ② 上传
+    # provider 解析（顺序见 push_venv 开头）：显式 > 环境变量 > 服务端 > 工作区配置 > oss
+    provider = _resolve_provider(pre_result, explicit_provider)
     push_cmd = _build_push_cmd(venv_name, item.path, upload_prefix, provider, force, no_checksum,
                                no_zip, no_diff, list_timeout, sync_timeout, cloud_connect_timeout,
                                token_expires, part_mb_size, proxy)

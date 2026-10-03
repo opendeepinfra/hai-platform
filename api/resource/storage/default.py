@@ -21,7 +21,8 @@ from logm import logger
 from api.depends import get_ugc_user
 from cloud_storage.metrics import env_push_requests_total, env_register_duration_seconds
 from cloud_storage.service import (WorkspaceError, parse_json_body,
-                                   derive_env_path, register_env, env_registry_self_check)
+                                   derive_env_path, register_env, env_registry_self_check,
+                                   get_provider_name)
 
 if TYPE_CHECKING:
     from .implement import MountPoint
@@ -55,7 +56,12 @@ async def update_cluster_venv(request: Request, user=Depends(get_ugc_user)):
 
     出参：{'success': 1, 'path': '<集群 env 目录绝对路径>', 'exists': <bool>,
            'reused': <bool>, 'cloud_path': <对象存储 key 前缀>,
-           'haienv_version': <集群侧 haienv 版本>}
+           'haienv_version': <集群侧 haienv 版本>,
+           'provider': <本部署的 cloud.storage.provider，如 oss / s3>}
+
+    `provider` 给客户端用：`hai-cli env push` 要把它透传给
+    `haiworkspace push --env_provider`；否则客户端只能猜（旧客户端写死 `oss`，
+    在 s3/RustFS 部署上会报 `get_sts_token returns non oss data`）。
     '''
     await _require_config()
     params = request.query_params
@@ -78,9 +84,12 @@ async def update_cluster_venv(request: Request, user=Depends(get_ugc_user)):
         raise WorkspaceError('INTERNAL_ERROR', f'预检失败: {e}')
     env_push_requests_total.labels(api='update_cluster_venv', result='ok', code='OK').inc()
     result['success'] = 1
+    # 告诉客户端本部署的云存储 provider（客户端据此拼 `haiworkspace push --env_provider`）
+    result.setdefault('provider', get_provider_name())
     logger.info(f'[ENV] update_cluster_venv user={user.user_name} env={venv_name} '
                 f'path={result.get("path")} exists={result.get("exists")} '
-                f'reused={result.get("reused")} elapsed_ms={int((time.time() - started) * 1000)}')
+                f'reused={result.get("reused")} provider={result.get("provider")} '
+                f'elapsed_ms={int((time.time() - started) * 1000)}')
     return result
 
 

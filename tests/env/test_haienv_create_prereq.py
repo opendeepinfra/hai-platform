@@ -214,3 +214,44 @@ def test_in_platform_env_detection(monkeypatch):
         assert command_module.in_platform_env() is True
     finally:
         os.unlink(tmp_marker)
+
+
+# --------------------------------------------------------------------------- issue #5
+
+def test_issue5_create_haienv_does_not_chmod_home(monkeypatch, tmp_path):
+    '''
+    回归 issue #5：`create_haienv` 绝不能把 `$HOME`（HAIENV_PATH 缺省值）chmod 成 0777。
+
+    原实现调用了一个没有 import 的 `get_path_prefix()`：必然抛 NameError，又被
+    `except Exception: pass` 吞掉 —— 那处 chmod 一直是死代码。改成共享助手后，
+    护栏必须真的拦住家目录。
+    '''
+    import asyncio
+
+    import haienv.client.model as model
+    from haienv.client import api as haienv_api
+
+    fake_home = tmp_path / 'home' / 'user'
+    env_dir = fake_home / 'myenv_0'
+    env_dir.mkdir(parents=True)
+
+    os.environ['HAIENV_PATH'] = str(fake_home)
+    model.set_path_prefix(str(fake_home))
+    setattr(model, '__db_path', None)
+
+    real_expanduser = os.path.expanduser
+    monkeypatch.setattr(os.path, 'expanduser',
+                        lambda p: str(fake_home) if p == '~' else real_expanduser(p))
+    monkeypatch.setattr('builtins.input', lambda prompt='': 'Y')
+
+    chmods = []
+    monkeypatch.setattr(os, 'chmod', lambda p, m: chmods.append(str(p)))
+    monkeypatch.setattr(haienv_api, 'get_haienv_path',
+                        lambda haienv_name: {'success': 1, 'msg': str(env_dir)})
+    monkeypatch.setattr(haienv_api.os, 'system', lambda cmd: 0)  # 不真的调用 conda
+
+    asyncio.get_event_loop().run_until_complete(
+        haienv_api.create_haienv('myenv', 'False', '3.8', None, None, None))
+
+    assert [p for p in chmods if str(fake_home) in p] == [], \
+        f'create_haienv 不该 chmod 家目录，实际: {chmods}'

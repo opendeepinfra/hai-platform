@@ -13,6 +13,45 @@ def get_path_prefix():
     return os.path.abspath(__path_prefix)
 
 
+def relax_env_dir_permissions(path=None, quiet=False):
+    '''
+    设计 §4.4 路径 ①（`docs/haiplatform/env/env-server-design.md`）：把用户 env 目录放宽到
+    0o777，让平台账号（ugc-server）能写 `{user_env_dir}/venv.db`。
+
+    ⚠️ 安全护栏（issue #5）：**绝不对用户家目录（及其祖先、以及过浅的系统目录）做 chmod**。
+    本函数在客户端侧调用，而客户端侧的 env 根目录在 hai/K8s 部署里默认就是 `$HOME`
+    （`HAIENV_PATH` 未设置时，见 `get_path_prefix`）。把家目录改成 0777 会让 sshd 的
+    StrictModes 拒绝公钥登录，把用户锁在机器外；而它对这里想解决的问题（**集群侧**目录
+    不可写）毫无帮助 —— 那是另一台机器 / 另一份文件系统上的路径。
+
+    :param path: 目标目录，缺省为 `get_path_prefix()`（本机 env 根目录）
+    :param quiet: True 时不打印跳过/失败原因
+    :return: True 表示确实放宽了权限；False 表示跳过（不存在 / 命中护栏 / chmod 失败）
+    '''
+    target = os.path.abspath(path or get_path_prefix())
+    if not os.path.isdir(target):
+        return False
+
+    home = os.path.abspath(os.path.expanduser('~'))
+    if target == home or home.startswith(target.rstrip(os.sep) + os.sep):
+        if not quiet:
+            print(f'[haienv] 跳过 chmod {target}：这是用户家目录或其祖先，放宽为 0777 会让 '
+                  f'sshd StrictModes 拒绝公钥登录（见 issue #5）')
+        return False
+    if target.count(os.sep) < 2:  # '/'、'/home'、'/tmp' 这类过浅路径同样不动
+        if not quiet:
+            print(f'[haienv] 跳过 chmod {target}：路径过浅，疑似系统目录')
+        return False
+
+    try:
+        os.chmod(target, 0o777)
+        return True
+    except OSError as e:
+        if not quiet:
+            print(f'[haienv] 放宽 {target} 权限失败（已忽略）：{e}')
+        return False
+
+
 def get_db_path(outside_db_path=None):
     if outside_db_path is not None:
         return outside_db_path

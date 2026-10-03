@@ -4,12 +4,16 @@ set -e
 
 echo "==== label nodes ===="
 MARS_GROUP_FLAG=$(python -c "import conf; print(conf.MARS_GROUP_FLAG)")
-if [[ "${TRAINING_GROUP}" != "" ]]; then
+if [[ "${TRAINING_GROUP}" != "" && -n "${TRAINING_NODES// /}" ]]; then
   echo "kubectl label nodes ${TRAINING_NODES} ${MARS_GROUP_FLAG}=${TRAINING_GROUP}"
   kubectl label nodes ${TRAINING_NODES} ${MARS_GROUP_FLAG}=${TRAINING_GROUP} --overwrite
 fi
 
-if [[ "${JUPYTER_GROUP}" != "" ]]; then
+# 注意：JUPYTER_NODES 允许为空白（单节点部署刻意没有 jupyter 节点）。
+# 不加这个判空，`kubectl label nodes   key=val` 会报
+# "resource(s) were provided, but no name was specified" 并以非 0 退出，
+# 而本脚本是 set -e —— 结果平台容器启动 1 秒即死、CrashLoopBackOff。
+if [[ "${JUPYTER_GROUP}" != "" && -n "${JUPYTER_NODES// /}" ]]; then
   echo "kubectl label nodes ${JUPYTER_NODES} ${MARS_GROUP_FLAG}=${JUPYTER_GROUP}"
   kubectl label nodes ${JUPYTER_NODES} ${MARS_GROUP_FLAG}=${JUPYTER_GROUP} --overwrite
 fi

@@ -382,7 +382,7 @@ manager_image = '${BASE_IMAGE}'  # manager 使用的镜像，和 hai image 一�
 [launcher.task_namespaces_by_role]
 # 任务运行的namespace
 internal = '${TASK_NAMESPACE}'
-external = '${TASK_NAMESPACE}'-external
+external = '${TASK_NAMESPACE}'
 # 下面配置 manager 使用的 kube config
 [launcher.manager_envs]
 KUBECONFIG = '/root/.kube/config'

@@ -143,6 +143,22 @@ kube taint node "$NODE_NAME" node-role.kubernetes.io/control-plane- 2>/dev/null 
   || warn "去污点失败（可能已去）"
 kube label node "$NODE_NAME" "${MARS_PREFIX}_mars_group=${MARS_GROUP}" --overwrite >/dev/null
 kube label node "$NODE_NAME" nvidia.com/gpu.present=true --overwrite >/dev/null
+
+# 关键：kubeadm 会给控制面节点打上
+#   node.kubernetes.io/exclude-from-external-load-balancers
+# 任何 LoadBalancer 实现（MetalLB 等）都会据此**拒绝在该节点通告 LB IP**：
+# 症状 = Service 拿到 EXTERNAL-IP，但局域网里 ARP 无人应答、外部完全不可达
+# （MetalLB debug 日志：reason=speaker's node has labeled
+#  'node.kubernetes.io/exclude-from-external-load-balancers'）。
+# 单节点集群里这台机器同时是唯一工作节点，必须去掉该标签。
+if kube get node "$NODE_NAME" \
+     -o jsonpath='{.metadata.labels.node\.kubernetes\.io/exclude-from-external-load-balancers}' 2>/dev/null \
+   | grep -q .; then
+  kube label node "$NODE_NAME" node.kubernetes.io/exclude-from-external-load-balancers- >/dev/null
+  ok "已移除 exclude-from-external-load-balancers（否则 LB VIP 无法在 LAN 通告）"
+else
+  ok "无 exclude-from-external-load-balancers 标签"
+fi
 ok "节点已去污点，并打上 ${MARS_PREFIX}_mars_group=${MARS_GROUP}"
 
 step "G. 节点状态（此时 CNI 还没装，NotReady 属正常）"

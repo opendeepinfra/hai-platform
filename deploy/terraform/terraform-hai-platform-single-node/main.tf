@@ -153,6 +153,15 @@ variable "metallb_ip_range" {
   description = "MetalLB 地址池：必须是 Mac/103 同网段的空闲 IP，这样平台地址从 Mac 直接可达。"
 }
 
+variable "metallb_interface" {
+  type        = string
+  default     = "enp9s0"
+  description = <<-EOT
+    MetalLB L2 通告绑定的网卡。103 上同时有 enp8s0/enp9s0/InfiniBand(ibs3*)/ZeroTier(zt*)/docker，
+    不显式指定时 speaker 会在多张网卡上创建应答器，实测会拿不到 LAN 侧的 ARP 响应。
+  EOT
+}
+
 variable "postgres_user" {
   type    = string
   default = "root"
@@ -208,6 +217,16 @@ variable "task_test_version" {
   description = "改这个值可强制下一次 apply 重跑任务测试。"
 }
 
+variable "point_hai_cli" {
+  type        = bool
+  default     = true
+  description = <<-EOT
+    部署完成后，是否把 **fireflyer 用户的默认 hai-cli 配置**（~/.hfai/conf.yml）指向本平台，
+    以便登录 103 后直接 `hai-cli whoami / nodes / python ...`。原配置会备份为
+    ~/.hfai/conf.yml.vm-platform.bak.<时间戳>；其它平台可用 HFAI_CLIENT_CONFIG 并行保留。
+  EOT
+}
+
 variable "reset_data" {
   type        = bool
   default     = false
@@ -245,6 +264,7 @@ locals {
     HAI_SERVER_ADDR       = var.hai_server_addr
     METALLB_VERSION       = var.metallb_version
     METALLB_IP_RANGE      = var.metallb_ip_range
+    METALLB_INTERFACE     = var.metallb_interface
     PLATFORM_IMAGE        = var.platform_image
     BASE_IMAGE            = local.base_image
     TRAIN_IMAGE           = local.train_image
@@ -256,6 +276,7 @@ locals {
     BFF_ADMIN_UID         = tostring(var.bff_admin_uid)
     MIN_FREE_DISK_GB      = tostring(var.min_free_disk_gb)
     RESET_DATA            = tostring(var.reset_data)
+    POINT_HAI_CLI         = tostring(var.point_hai_cli)
   }
 }
 
@@ -265,12 +286,13 @@ locals {
 
 resource "null_resource" "preflight" {
   triggers = {
-    kubeconfig_path = var.kubeconfig_path
-    node_name       = var.node_name
-    shared_fs_root  = var.shared_fs_root
-    node_gpus       = tostring(var.node_gpus)
-    platform_image  = var.platform_image
-    metallb_ip      = var.metallb_ip_range
+    kubeconfig_path   = var.kubeconfig_path
+    node_name         = var.node_name
+    shared_fs_root    = var.shared_fs_root
+    node_gpus         = tostring(var.node_gpus)
+    platform_image    = var.platform_image
+    metallb_ip        = var.metallb_ip_range
+    metallb_interface = var.metallb_interface
     # 脚本本体也进触发器：否则改了 files/*.sh 再 apply，Terraform 认为"无变化"而不重跑该步
     script_sha = filemd5("${path.module}/files/01-preflight.sh")
   }
@@ -317,6 +339,7 @@ resource "null_resource" "metallb" {
   triggers = {
     version    = var.metallb_version
     ip_range   = var.metallb_ip_range
+    interface  = var.metallb_interface
     script_sha = filemd5("${path.module}/files/03-metallb.sh")
   }
 
@@ -343,6 +366,7 @@ resource "null_resource" "hai_up" {
       var.task_namespace, var.shared_fs_root, var.node_name,
       tostring(var.node_gpus), var.hai_server_addr, var.ingress_host,
       local.base_image, local.train_image, var.user_info,
+      tostring(var.point_hai_cli),
     ]))
     # destroy provisioner 只能引用 self.triggers，所以这些值也要进 triggers
     kubeconfig_path = var.kubeconfig_path

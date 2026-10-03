@@ -145,27 +145,34 @@ Hai Platform **不给任务 Pod 申请 `nvidia.com/gpu`**：
 
 ---
 
-## 6. 接平台（下一步，尚未包含在本模块）
+## 6. 接平台（已由 `../terraform-hai-platform-single-node` 实现）
 
-前置：把平台镜像导入**宿主 containerd 的 k8s.io 命名空间**（本机无内网 registry）：
+**平台已经部署完成**，用的就是本目录的兄弟模块
+[`terraform-hai-platform-single-node`](../terraform-hai-platform-single-node/)（独立 kubeconfig、独立数据目录
+`/nfs-shared/hai-single`、MetalLB LAN VIP `192.168.100.150`）。直接用它即可：
 
 ```bash
-sudo docker save registry.cn-hangzhou.aliyuncs.com/opendeepinfra/hai-platform:<tag> \
-  | sudo ctr -n k8s.io images import -
+cd ../terraform-hai-platform-single-node && ./create.sh      # 部署（含 π / GPU 任务测试）
+cd ../terraform-hai-platform-single-node && ./verify.sh      # 只读验收
 ```
 
-然后参照 `../terraform-hai-platform/main.tf` 的 `hai_up` 资源，用一组新变量跑 `hai-up`：
+它内部自动处理了下面这些与本集群强相关的点（本模块只负责"集群 + GPU 就绪"）：
 
-| 变量 | 本单节点取值 |
+| 关注点 | 取值 / 处理 |
 | --- | --- |
-| `KUBECONFIG` | `/root/.kube/hai-single.conf`（**不要**用 `/root/.kube/config`） |
-| `TRAINING_NODES` / `JUPYTER_NODES` | `fireflyer-0003`（或你设置的 `node_name`） |
+| `KUBECONFIG` | `/root/.kube/hai-single.conf`（**不要**用 `/root/.kube/config`，那是 VM 集群）；hai-up 会把它拷进平台 Pod 供 launcher/manager 建任务 Pod |
+| `TRAINING_NODES` / `MANAGER_NODES` | `fireflyer-0003` |
+| `JUPYTER_NODES` | `" "`（单节点刻意没有 jupyter 节点；hai-up 用 `:=` 会把**空值**换成假节点，空格则数组为空） |
 | `NODE_GPUS` | **1**（本机只有 1 块 V100；老环境默认 4 会分错卡） |
 | `HAS_RDMA_HCA_RESOURCE` | `0`（要启用 RDMA 再装 mellanox rdma-shared-device-plugin） |
-| `SHARED_FS_ROOT` | `/nfs-shared`（单机下就是本机路径，比 hostPath 更简单） |
-| `MARS_PREFIX` / `TRAINING_GROUP` | `hai` / `training`（本模块已把节点标好 `hai_mars_group=training`） |
-| Service | `one/hai-up.sh` 的 k8s 模板建的是 `type: LoadBalancer`；单节点没有 MetalLB 时会是 `<pending>`，两条路：① 事后 `kubectl patch svc hai-platform-svc -p '{"spec":{"type":"NodePort"}}'` 并用宿主已有 nginx 反代（80 已被 nginx 占用）；② 装 MetalLB（speaker 镜像本机已缓存，controller 需联网拉）。 |
-| Ingress | 模板会建 `ingressClassName: nginx` 的 Ingress；不装 ingress controller 时该对象只是静态声明，不影响 NodePort 访问。 |
+| `SHARED_FS_ROOT` | `/nfs-shared/hai-single`（与 VM 平台的 `/nfs-shared/hai-platform` 完全隔离） |
+| Service | 平台 Service 是 `type: LoadBalancer` → 由平台模块安装 MetalLB 提供 LAN VIP |
+
+> ⚠️ **LoadBalancer 与单控制面节点**：kubeadm 会给控制面节点打上
+> `node.kubernetes.io/exclude-from-external-load-balancers`，任何 LoadBalancer 实现都会据此**拒绝在该节点通告** LB IP
+> （症状：Service 有 `EXTERNAL-IP`，但局域网内 ARP 无人应答、外部完全不可达）。
+> 本模块的 `04-kubeadm-init.sh` 已在 init 后**自动移除该标签**；若你的集群是更早版本创建的，
+> 手工执行：`kubectl-hai label node <node> node.kubernetes.io/exclude-from-external-load-balancers-`
 
 ---
 

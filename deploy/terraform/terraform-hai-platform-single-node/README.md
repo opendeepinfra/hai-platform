@@ -66,13 +66,39 @@ cd deploy/terraform/terraform-hai-platform-single-node
 | `has_rdma_hca_resource` | `0` | 代码默认 `1` 会给所有任务加 `rdma/hca` 请求；本机未部署 RDMA device plugin，任务会 Pending |
 | `hai_server_addr` / `ingress_host` | `hai_server_addr` = MetalLB VIP；`ingress_host` 必须是 **DNS 名**（默认集群内部服务名） | `hai_server_addr` 写进 `override.toml` 的 postgres/redis/`launcher.api_server`，必须稳定可达；`ingress_host` 会进 Ingress 的 `host`，apiserver 会拒绝 IP（`must be a DNS name, not an IP address`）。**浏览器看到的 studio 地址不取 `ingress_host`**，而由 04-G 的 `BFF_ADDR` 决定（见下） |
 | 平台页面的 `bffURL` | `${HAI_SERVER_ADDR}:8080`（04 步骤 G patch 容器 env `BFF_ADDR`） | `one/hai-up.sh:531-532` 把 `BFF_ADDR` 设成 `INGRESS_HOST`（集群内部名），studio 再把它写进页面 `window.haiConfig.bffURL`；浏览器于是请求 `http://hai-platform-svc.hai-platform.svc.cluster.local/proxy/s?endPoint=…`——而部署机的 `/etc/hosts` 往往已把该内部名指向 **103**（宿主 nginx → **VM 平台**），登录代理因此打到另一个平台并返回 **403**（实测：同请求发到 `http://192.168.100.150:8080/proxy/s` 返回 `success:1`，发到内部名返回 403）。改成 VIP:8080 后页面与 API 同源，不依赖任何 DNS 改写 |
+| `BFF_ADMIN_TOKEN` | 持久化在 `${HAI_DIR}/.bff_admin_token`，跨 run 复用（04 步骤 A 首次生成、H2 校准 DB） | `init.sql` 只在**首次** init 时写 `bff_admin` 行，而本模块默认**保留** `${HAI_DIR}/db`；token 每次都重新随机的话，DB 里的 `bff_admin.token` 与容器 env 不一致 → studio 的内部调用（`/query/user/training_quota/list_all`、`/query/user/info`…）全 **403** → 前端 `data_panel` 接口 **500**（实测：登录后 UI 卡在 "Fetching User Info"）。持久化 + H2 无损校准即可，不需要清库 |
 | `image_pull_policy` | `IfNotPresent`（04 步骤自动写进 override.toml） | 镜像里 `core.toml` 是 `Always`；本机没有 registry 凭据，会 ImagePullBackOff |
 | `task_namespaces_by_role` | `hai-platform`（04 步骤自动补） | 镜像里是厂商占位名，`k8s_watcher` 会 watch 一个不存在的 namespace，症状是节点注册不上、`/query/node/list` 500 |
 | 平台 Pod 的 `imagePullPolicy` | `IfNotPresent`（04 步骤 G 直接 patch StatefulSet） | `one/hai-up.sh:510` 把平台 StatefulSet **写死** `imagePullPolicy: Always`，而本机没有内网 registry、镜像只是 `docker save → ctr import` 进本地 containerd → 平台 Pod 永远 `ImagePullBackOff`（`failed to resolve reference … not found`）。`override.toml` 里的 `image_pull_policy` 只管**任务/manager** Pod，管不到平台自己 |
 | Pod 内 kubeconfig 文件名 | 04 步骤 F 额外补一份 `${HAI_DIR}/kubeconfig/config` | `one/hai-up.sh:513` 硬编码容器/manager 的 `KUBECONFIG=/root/.kube/config`，而 `create_kubeconfig()`（`one/hai-up.sh:812`）按**原文件名**拷贝——本实例用的是 `/root/.kube/hai-single.conf`，所以挂进 Pod 的 `/root/.kube/` 里只有 `hai-single.conf`，不补 `config` 则 launcher/manager 建任务直接失败 |
 | `task_namespaces_by_role.external` | 04 步骤 E 改写成合法 TOML | `one/hai-up.sh:385` 生成的是 `external = '<ns>'-external`（单引号字符串后跟裸字符）——**非法 TOML**，平台组件合并 `override.toml` 时会解析失败（仓库内 `one/one_etc/core.toml:53` 已是对的，属模板笔误） |
 | 容器内 `JUPYTER_GROUP` | 置空（04 步骤 G patch 平台 StatefulSet 的 env） | 本部署**刻意没有 jupyter 节点**（`JUPYTER_NODES=" "`），而镜像里的 `one/entrypoint.sh` 是 `set -e` 且只判断 `JUPYTER_GROUP != ""`，于是执行 `kubectl label nodes   hai_mars_group=jupyter_cpu`（没有节点名）→ 非 0 退出 → 平台容器**启动 1 秒即死、CrashLoopBackOff**。置空容器内的 `JUPYTER_GROUP` 即跳过该分支；平台运行时用的是 `override.toml` 的 `[jupyter] shared_node_group_prefix`，镜像内也没有任何 Python 读这个环境变量（已 grep 核实）。仓库 `one/entrypoint.sh` 已同步修好判空，但已构建的镜像不会因此改变，故运行期兜底 |
-| hai-cli 配置 | `HFAI_CLIENT_CONFIG=/tmp/hai-single-hfai/conf.yml` | 103 上 `~/.hfai/conf.yml` 现在指向 VM 平台，冒烟测试不能覆盖它 |
+| hai-cli 配置 | `HFAI_CLIENT_CONFIG=/tmp/hai-single-hfai/conf.yml`（冒烟用）；部署后 fireflyer 的**默认** `~/.hfai/conf.yml` 也会指向本平台（见 §3.5） | 103 上 `~/.hfai/conf.yml` 原本指向 VM 平台；冒烟测试用独立配置以免互相干扰，同时把默认配置切到新平台以便日常使用（原文件已备份） |
+| MetalLB 通告 | 删除 `node.kubernetes.io/exclude-from-external-load-balancers` 标签（03 步骤）+ 地址池用**区间**写法 + `interfaces: [enp9s0]` | kubeadm 会给控制面节点打这个标签，**MetalLB 据此拒绝通告 LB IP**：Service 有 `EXTERNAL-IP` 但局域网内 ARP 无人应答、Mac 完全不可达（speaker debug：`reason=speaker's node has labeled 'node.kubernetes.io/exclude-from-external-load-balancers'`）。103 还有 enp8s0/InfiniBand/ZeroTier/docker 多张网卡，不钉住 LAN 网卡时应答器会绑错网卡 |
+
+## 3.5 用 `hai-cli` 连接本平台（fireflyer 用户）
+
+部署（04 步骤末尾）会把 **fireflyer 的默认 hai-cli 配置**指向本平台，原配置备份为
+`~/.hfai/conf.yml.vm-platform.bak.<时间戳>`：
+
+```bash
+ssh fireflyer@192.168.100.103
+cat ~/.hfai/conf.yml            # url: http://192.168.100.150
+hai-cli whoami                  # haiadmin
+hai-cli nodes                   # fireflyer-0003  ready  training  default_cluster
+hai-cli python <脚本> -- --nodes 1 -g training --name demo -f    # 提交任务
+```
+
+* 平台账号是 `haiadmin`（token `123456`），**与 Linux 用户无关** —— 以 `fireflyer` 身份提交，
+  任务归属仍是 `haiadmin`，脚本要放在 `haiadmin` 的共享工作区
+  （`${SHARED_FS_ROOT}/hai-platform/workspace/haiadmin/...`）。
+* 想**同时**保留 VM 平台：用独立配置文件即可，两套互不覆盖：
+  ```bash
+  HFAI_CLIENT_CONFIG=~/.hfai/vm.conf hai-cli init 123456 --url http://10.205.52.200
+  HFAI_CLIENT_CONFIG=~/.hfai/vm.conf hai-cli nodes
+  ```
+* 切回 VM 平台：`cp ~/.hfai/conf.yml.vm-platform.bak.* ~/.hfai/conf.yml`。
+* 关掉这一步：`point_hai_cli = false`（变量）。
 
 ## 4. GPU 任务是怎么验的
 
@@ -124,10 +150,10 @@ terraform 以「任务 `succeeded` + `TASK_RUNNER:EXIT_OK` + 出现 `GPU_RESULT`
 
 ## 7. 实测记录（2026-10-03，103 实机）
 
-**结果**：`terraform apply` 全绿（`Apply complete! Resources: 2 added, 0 changed, 2 destroyed`），
-`terraform plan` 复查 **No changes**；平台 Pod 稳定 `1/1 Running 且 Ready`，`./verify.sh` **验收通过**，
+**结果**：`terraform apply` 全绿，`terraform plan` 复查 **No changes**；平台 Pod 稳定 `1/1 Running 且 Ready`，
+`./verify.sh` **验收通过**（含 D2 登录链路、D3 studio 内部调用），
 π 任务与 GPU 任务都真的在任务 Pod 里跑完（`chain=finished job=succeeded`），
-**浏览器登录链路**（页面 `bffURL` + studio `/proxy/s`）也已在 Mac 侧实测返回 `success:1`。
+**登录 + 数据面板在 Mac 浏览器里实测可用**。
 
 | 时间点 | 事件 |
 | --- | --- |
@@ -136,6 +162,8 @@ terraform 以「任务 `succeeded` + `TASK_RUNNER:EXIT_OK` + 出现 `GPU_RESULT`
 | 13:48–13:50 | 第 3 次 apply（修掉 ④⑤ 后）：π 任务 **task 34**、GPU 任务 **task 35** 均 `job=succeeded`；`./verify.sh` 独立复跑通过；`terraform plan` → No changes |
 | 13:52–13:57 | 浏览器点 Sign in 报 **403**：页面 `bffURL` 是集群内部名，在 Mac 的 `/etc/hosts` 里指向 103（宿主 nginx → **VM 平台**），登录代理打到了另一个平台（实测同请求发到内部名 403、发到本实例 `:8080` `success:1`）→ 修 ⑥⑦ |
 | 13:57–14:05 | 第 4 次 apply（修掉 ⑥⑦ 后）：`BFF_ADDR` 指回 `192.168.100.150:8080`，`verify` 首次带上 **D2** 且全绿；Mac 侧复核 `window.haiConfig.bffURL = http://192.168.100.150:8080`、`/proxy/s` 登录返回 `success:1` |
+| 14:05–14:20 | 登录成功但 UI 卡在 **Fetching User Info**：控制台报 `500 trainings/data_panel/user_node_quota_info`；studio 日志显示它带 `BFF_ADMIN_TOKEN` 调 `/query/user/training_quota/list_all` 被 **403**。根因：本模块**保留 DB**，而 `BFF_ADMIN_TOKEN` 每个 run 都重新随机 → DB 里的 `bff_admin` 行还是第 1 次 init 的旧 token（实测 env `988248308889053c4439` vs DB `fa989e63a2…`）→ 修 ⑨ |
+| 14:20–14:30 | 第 5 次 apply（修掉 ⑨ 后）：token 落盘复用 + H2 无损校准 DB，`verify` 新增 **D3** 且全绿；UI 的 node quota 接口返回 `success:true`，**登录 + 数据面板可用** |
 
 **关键证据（原样摘录）**
 
@@ -171,14 +199,30 @@ POST http://192.168.100.150:8080/proxy/s?endPoint=/operating/user/access_token/c
 ```
 # π 任务（task 34）
 [ OK ] π 任务通过：pi=3.1416904000 error=9.774641020676711e-05
-# GPU 任务（task 35）
+# GPU 任务（task 35，模块的 gpu_task_test 资源）
 GPU 0: Tesla V100-SXM2-16GB (UUID: GPU-fe16a16e-d671-0aa5-37ab-c199473a8943)
 GPU_QUERY Tesla V100-SXM2-16GB, 16384 MiB, 570.211.01
 TASK_RUNNER:EXIT_OK
 [ OK ] GPU 任务通过（job=succeeded）
+
+# GPU 任务（task 36，**用 fireflyer 的默认 hai-cli 直接提交**，即 §3.5 的用户路径）
+$ ssh fireflyer@192.168.100.103 'hai-cli python .../gpu_task.py -- --nodes 1 -g training --name gpu_probe -f'
+[2026-10-03 13:59:17] [start training gpu_probe(36) on fireflyer-0003 for haiadmin]
+GPU_INFO NVIDIA_VISIBLE_DEVICES=None CUDA_VISIBLE_DEVICES=None
+GPU_DEVS /dev/nvidia-uvm,/dev/nvidia-uvm-tools,/dev/nvidia0,/dev/nvidiactl
+GPU_SMI GPU 0: Tesla V100-SXM2-16GB (UUID: GPU-fe16a16e-d671-0aa5-37ab-c199473a8943)
+GPU_QUERY Tesla V100-SXM2-16GB, 16384 MiB, 570.211.01
+TASK_RUNNER:EXIT_OK
 ```
 
-**踩到并修掉的 7 个坑**（细节见 §3 表与脚本注释）
+> 关于 `NVIDIA_VISIBLE_DEVICES=None`：平台**确实**分配了显卡（DB 证据
+> `task_ng.config_json->'assigned_resource' = {"assigned_gpus": [[0]], ...}`、
+> `pod_ng.assigned_gpus = {0}`），并把该值写进任务 Pod 的 env；镜像里的
+> `marsv2/entrypoints/system_scope.sh:24` 会在拉起用户脚本前**主动 `unset`** 它
+> （挂载动作已由容器运行时按该变量完成），所以探针读到 `None` 是**预期行为**，
+> 不是没分到卡。单卡环境下"运行时挂载全部卡"与"只挂 0 号卡"等价。
+
+**踩到并修掉的 8 个坑**（细节见 §3 表与脚本注释）
 
 1. 平台 StatefulSet 写死 `imagePullPolicy: Always`（`one/hai-up.sh:510`）→ 本地导入的镜像永远拉不到 → 04-G 改 `IfNotPresent`；
 2. Pod 内 `KUBECONFIG=/root/.kube/config` 与拷进去的 `hai-single.conf` 不同名（`one/hai-up.sh:513` / `:812`）→ 04-F 补一份 `config`；
@@ -186,7 +230,22 @@ TASK_RUNNER:EXIT_OK
 4. `one/entrypoint.sh` 的 `set -e` + `JUPYTER_NODES=" "` → `kubectl label nodes` 缺节点名报错、容器启动 1 秒即死 → 04-G 置空容器内 `JUPYTER_GROUP`（仓库 `one/entrypoint.sh` 已同步修好判空）；
 5. `task_lib.sh` 的 `hcli_submit` 把提交输出整张表写进 stdout，污染 task id → 回显改走 stderr；
 6. **浏览器登录打到另一个平台（403）**：页面 `window.haiConfig.bffURL` 取自容器 env `BFF_ADDR ← INGRESS_HOST`（`one/hai-up.sh:531-532`），即集群内部名；而部署机 `/etc/hosts` 常把该内部名指向 103（宿主 nginx → VM 平台），于是 studio 的 `/proxy/s` 登录请求落到 **VM 平台**并返回 403 → 04-G 把 `BFF_ADDR` 改成本实例的 `${HAI_SERVER_ADDR}:8080`（页面与 API 同源，不依赖 DNS 改写）。`05-verify.sh` 新增 **D2** 步专门守这条链路（同时校验页面 bffURL 与 `/proxy/s` 登录）；
-7. **验收对着正在终止的旧 Pod 跑**：StatefulSet 是 `OrderedReady`，删掉旧 Pod 后新 Pod 要等旧 Pod 完全消失才创建，而旧 Pod 终止期间 `phase` 仍是 `Running` → 只判 phase 会读到**修补前**的配置（实测 D2 因此误报）→ `lib.sh` 新增 `wait_pod_ready`（要求 Ready=True + UID 变化），04-H 与 05-B 改用它。
+7. **验收对着正在终止的旧 Pod 跑**：StatefulSet 是 `OrderedReady`，删掉旧 Pod 后新 Pod 要等旧 Pod 完全消失才创建，而旧 Pod 终止期间 `phase` 仍是 `Running` → 只判 phase 会读到**修补前**的配置（实测 D2 因此误报）→ `lib.sh` 新增 `wait_pod_ready`（要求 Ready=True + UID 变化），04-H 与 05-B 改用它；
+8. **MetalLB 拿到 IP 却无法从局域网访问**：kubeadm 给控制面节点打的
+   `node.kubernetes.io/exclude-from-external-load-balancers` 标签会让 speaker **拒绝通告**该 IP ——
+   `EXTERNAL-IP` 显示 192.168.100.150，但从 Mac `ping`/`curl` 全无响应、Mac 的 ARP 表里该地址一直是
+   `(incomplete)`，而宿主机自己访问正常（kube-proxy 本地 DNAT，不经过 L2）。
+   定位过程：`tcpdump -i enp9s0 -n -e arp` 能看到 Mac 的 ARP 请求**到达**但**无人应答** →
+   给 speaker 开 `--log-level=debug` 后拿到确凿原因（`skipping should announce l2 … reason=speaker's node has labeled …`）。
+   修法：删该标签（`terraform-k8s-single-node/04` 与 `03-metallb.sh` 都已内置），并把地址池改成区间写法、
+   用 `L2Advertisement.spec.interfaces: [enp9s0]` 把通告钉在 LAN 网卡上（103 还有 enp8s0/IB/ZeroTier/docker）。
+9. **`BFF_ADMIN_TOKEN` 每 run 随机 → DB 里的 `bff_admin` token 漂移**：本模块默认**保留**
+   `${HAI_DIR}/db`（不像 VM 模块每次清库），而 `init.sql` 只在**首次** init 写 `bff_admin` 行；
+   token 每次重新随机后，容器 env 与 DB 行不一致 → studio 走集群内部接口时被 **403**
+   （`data: {"success":0,"msg":"根据 token 未找到用户"}`）→ 前端 `data_panel` 接口 **500**、
+   登录后 UI 卡在 "Fetching User Info"。修法：token 持久化到 `${HAI_DIR}/.bff_admin_token`
+   跨 run 复用，并在 04-H2 用一条 `update "user" … where user_name='bff_admin'` 无损校准已有 DB；
+   `05-verify.sh` 新增 **D3** 步守这条链路（实测校准后该接口从 500 → `success:true`）。
 
 > 另外：`main.tf` 各步骤的 `triggers` 现在包含 `files/*.sh` 的 `filemd5` —— 改了脚本再 `apply`
 > 会**真的重跑那一步**；此前只有变量进触发器，改了脚本 Terraform 会认为「无变化」而不执行。

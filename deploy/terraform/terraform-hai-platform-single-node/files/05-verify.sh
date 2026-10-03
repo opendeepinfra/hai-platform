@@ -72,16 +72,41 @@ if [ -n "$LB" ]; then
   esac
   if [ -n "$BFF" ]; then
     TOKEN="${USER_INFO##*:}"
-    RESP="$(curl -s --max-time 15 -X POST \
-      "$BFF/proxy/s?endPoint=/operating/user/access_token/create" \
-      -H 'Content-Type: application/json' -H "token: ${TOKEN}" \
-      -d "{\"url\":\"http://$LB/operating/user/access_token/create\",\"config\":{\"method\":\"POST\",\"data\":{\"user_name\":\"${ROOT_USER}\",\"token\":\"${TOKEN}\"},\"headers\":{\"Content-Type\":\"application/json\"}}}" \
-      || true)"
+    # 平台 Pod 刚 Ready 时，Pod 内的 operating/query 服务可能还在起（haproxy 会回 503），
+    # 所以这里重试，避免刚 apply 完就误判（实测踩过一次）。
+    RESP=""
+    for i in $(seq 1 12); do
+      RESP="$(curl -s --max-time 15 -X POST \
+        "$BFF/proxy/s?endPoint=/operating/user/access_token/create" \
+        -H 'Content-Type: application/json' -H "token: ${TOKEN}" \
+        -d "{\"url\":\"http://$LB/operating/user/access_token/create\",\"config\":{\"method\":\"POST\",\"data\":{\"user_name\":\"${ROOT_USER}\",\"token\":\"${TOKEN}\"},\"headers\":{\"Content-Type\":\"application/json\"}}}" \
+        || true)"
+      case "$RESP" in *'"success":1'*) break ;; esac
+      sleep 5
+    done
     case "$RESP" in
       *'"success":1'*) ok "浏览器登录链路通（studio /proxy/s → access_token 创建成功）" ;;
       *) fail "浏览器登录链路失败：$(echo "$RESP" | head -c 160)" ;;
     esac
   fi
+fi
+
+step "D3. studio 内部调用（bff_admin token ↔ DB 一致性）"
+# studio 走集群内部接口时会带 BFF_ADMIN_TOKEN；该 token 必须与 DB 里 bff_admin 行的
+# token 一致，否则内部调用 403 → 前端 data_panel 接口 500（实测：登录后 UI 卡在
+# Fetching User Info，控制台报 500 trainings/data_panel/user_node_quota_info）。
+if [ -n "$LB" ]; then
+  QUOTA=""
+  for i in $(seq 1 12); do
+    QUOTA="$(curl -s --max-time 15 -X POST -H "token: ${USER_INFO##*:}" \
+      "http://$LB:8080/trainings/data_panel/user_node_quota_info" || true)"
+    case "$QUOTA" in *'"success":true'*) break ;; esac
+    sleep 5
+  done
+  case "$QUOTA" in
+    *'"success":true'*) ok "studio 内部调用正常（node quota 接口 success:true）" ;;
+    *) fail "studio 内部调用失败：$(echo "$QUOTA" | head -c 160)" ;;
+  esac
 fi
 
 step "E. hai-cli 连通性（隔离配置）"

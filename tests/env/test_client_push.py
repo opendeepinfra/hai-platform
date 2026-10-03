@@ -341,3 +341,62 @@ def test_tc_c10_missing_cloud_path(venv_api, tmp_path, monkeypatch):
     assert result['success'] == 0
     assert 'cloud_path' in result['msg']
     assert executed == [], '缺 cloud_path 时不得上传'
+
+
+# --------------------------------------------------------------------------- issue #5
+# `hai-cli env push` 曾经无条件 `os.chmod(os.path.dirname(item.path), 0o777)`：
+# 在 hai/K8s 部署里 `HAIENV_PATH` 缺省为 `$HOME`，于是把家目录改成 0777，
+# sshd 的 StrictModes 随即拒绝公钥登录，把用户锁在机器外（见 issue #5）。
+
+def test_issue5_relax_helper_guard(monkeypatch, tmp_path):
+    '''护栏本身：家目录 / 家目录的祖先 / 过浅系统目录一律跳过，正常 env 根目录才放宽。'''
+    from haienv.client import model as model_mod
+
+    fake_home = tmp_path / 'home' / 'user'
+    fake_home.mkdir(parents=True)
+    real_expanduser = os.path.expanduser
+    monkeypatch.setattr(os.path, 'expanduser',
+                        lambda p: str(fake_home) if p == '~' else real_expanduser(p))
+
+    chmods = []
+    monkeypatch.setattr(os, 'chmod', lambda p, m: chmods.append(str(p)))
+
+    assert model_mod.relax_env_dir_permissions(str(fake_home), quiet=True) is False
+    assert model_mod.relax_env_dir_permissions(str(fake_home.parent), quiet=True) is False
+    assert model_mod.relax_env_dir_permissions('/', quiet=True) is False
+    assert model_mod.relax_env_dir_permissions(str(tmp_path / 'not-exist'), quiet=True) is False
+    assert chmods == [], f'护栏失效，不该 chmod: {chmods}'
+
+    ok_root = tmp_path / 'hfai_envs' / 'U-A'
+    ok_root.mkdir(parents=True)
+    assert model_mod.relax_env_dir_permissions(str(ok_root), quiet=True) is True
+    assert chmods == [str(ok_root)], '非家目录的 env 根目录仍应放宽权限（设计 §4.4 ①）'
+
+
+def test_issue5_push_does_not_chmod_home(venv_api, tmp_path, monkeypatch):
+    '''回归 issue #5：HAIENV_PATH 缺省为 $HOME 时，push_venv 绝不能 chmod 家目录。'''
+    fake_home = tmp_path / 'home' / 'user'
+    (fake_home / 'myenv_0').mkdir(parents=True)
+    _use_env_dir(fake_home)
+    Haienv.insert(haienv_name='myenv', haienv_config=HaienvConfig(
+        path=str(fake_home / 'myenv_0'), extend='False', extend_env='', py='3.8'),
+        outside_db_path=str(fake_home / 'venv.db'))
+
+    real_expanduser = os.path.expanduser
+    monkeypatch.setattr(os.path, 'expanduser',
+                        lambda p: str(fake_home) if p == '~' else real_expanduser(p))
+    chmods = []
+    monkeypatch.setattr(os, 'chmod', lambda p, m: chmods.append(str(p)))
+
+    async def _fake_requests(method, url, **kwargs):
+        if 'update_cluster_venv' in url:
+            return {'success': 1, 'path': '/cluster/myenv_0', 'exists': False,
+                    'cloud_path': 'hfai/shared/hfai_envs/U-A/myenv_0'}
+        return {'success': 1, 'registered': True}
+
+    monkeypatch.setattr(venv_api, 'async_requests', _fake_requests)
+    monkeypatch.setattr(venv_api.os, 'system', lambda cmd: 0)
+    result = asyncio.get_event_loop().run_until_complete(venv_api.push_venv('myenv'))
+    assert result['success'] == 1, result
+    assert [p for p in chmods if str(fake_home) in p] == [], \
+        f'push_venv 不该 chmod 家目录，实际: {chmods}'

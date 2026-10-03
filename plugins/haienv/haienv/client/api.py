@@ -7,7 +7,8 @@ import sysconfig
 import getpass
 from stat import S_IWUSR
 from .script import ACTIVATE
-from .model import Haienv, HaienvConfig, get_haienv_path, get_db_path, check_user_name
+from .model import (Haienv, HaienvConfig, get_haienv_path, get_db_path, check_user_name,
+                    relax_env_dir_permissions)
 
 
 HAIENV_PLACEHOLDER = 'haienv_placeholder'
@@ -55,10 +56,11 @@ async def create_haienv(haienv_name, extend, py, extra_search_dir, extra_search_
     # 设计 §4.4 修复路径 ①（HC-01 允许：只调整权限位，不改语义）：
     # 让集群侧平台账号能写 {user_env_dir}/venv.db（否则 env push 会得到
     # ENV_REGISTRY_NOT_WRITABLE）。失败不影响创建流程。
-    try:
-        os.chmod(get_path_prefix(), 0o777)
-    except Exception:
-        pass
+    #
+    # 注意：这里的 `get_path_prefix()` 原本就没有 import，调用必然抛 NameError 并被
+    # `except Exception: pass` 吞掉 —— 即这一段一直是死代码（issue #5）。改为走
+    # `relax_env_dir_permissions()`：它自带「绝不 chmod 家目录/系统目录」的护栏。
+    relax_env_dir_permissions()
     if extend == 'True':  # 继承上个环境的额外环境变量
         if os.environ.get('HFAI_ENV_EXTEND_PATH', ''):
             extra_search_dir = list(extra_search_dir) + os.environ['HFAI_ENV_EXTEND_PATH'].strip(':').split(':')

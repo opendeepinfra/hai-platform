@@ -23,7 +23,7 @@ from .api_config import get_mars_url as mars_url
 from .api_config import get_mars_token as mars_token
 from .api_utils import async_requests, RequestMethod
 from hfai.conf.utils import FileType
-from haienv.client.model import Haienv
+from haienv.client.model import Haienv, relax_env_dir_permissions
 
 
 def _resolve_workspace_bin() -> str:
@@ -159,10 +159,12 @@ async def push_venv(venv_name, force=False, no_checksum=False, no_zip=False, no_
     # 设计 §4.4 修复路径 ①：服务端需要写 {user_env_dir}/venv.db，而该目录通常由用户以
     # 755 创建。这里尽力把它放宽到 777（只影响权限位，不改语义）；失败不回滚、不影响主流程，
     # 由服务端返回 ENV_REGISTRY_NOT_WRITABLE 时再走运维处置。
-    try:
-        os.chmod(os.path.dirname(item.path), 0o777)
-    except Exception:
-        pass
+    #
+    # issue #5：只有客户端与集群共用同一份文件系统时（Fire-Flyer 共享盘）这里才可能命中集群侧
+    # 目录；hai/K8s 部署里 `HAIENV_PATH` 默认就是 `$HOME`，对家目录 chmod 0777 会让 sshd 的
+    # StrictModes 拒绝公钥登录、把用户锁在机器外，而且对集群侧目录毫无作用。
+    # `relax_env_dir_permissions()` 自带该护栏（家目录/其祖先/过浅系统目录一律跳过）。
+    relax_env_dir_permissions(os.path.dirname(item.path))
 
     # ---------------------------------------------------------------- ① API-11 预检
     pre_url = (f'{mars_url()}/ugc/update_cluster_venv?token={mars_token()}'
